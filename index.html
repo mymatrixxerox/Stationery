@@ -12,10 +12,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js" onerror="window.__fbLoadFailed=true"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js" onerror="window.__fbLoadFailed=true"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js" onerror="window.__fbLoadFailed=true"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js" onerror="window.__fbLoadFailed=true"></script>
 
 <style>
 :root{
@@ -230,9 +230,31 @@ table.report-table td{padding:7px 4px;border-bottom:1px dashed var(--green-200);
 #toast.show{opacity:1;transform:translate(-50%,0);}
 
 body.modal-open{overflow:hidden;}
+
+/* ---------- PIN lock ---------- */
+.pin-overlay{position:fixed;inset:0;background:var(--green-900);z-index:100;display:flex;align-items:center;justify-content:center;padding:20px;}
+.pin-overlay.hidden{display:none;}
+.pin-box{background:var(--paper);border-radius:var(--radius);padding:28px 24px;max-width:320px;width:100%;text-align:center;box-shadow:var(--shadow);}
+.pin-logo{font-size:34px;margin-bottom:8px;}
+.pin-title{font-family:var(--font-display);font-weight:600;font-size:17px;color:var(--green-900);}
+.pin-sub{font-size:12.5px;color:var(--muted);margin:4px 0 16px;}
+.pin-input{width:100%;text-align:center;letter-spacing:12px;font-size:24px;font-family:var(--font-mono);border:1.5px solid var(--green-200);border-radius:10px;padding:12px;outline:none;}
+.pin-input:focus{border-color:var(--green-600);}
+.pin-error{color:var(--danger);font-size:12.5px;margin-top:8px;}
 </style>
 </head>
 <body>
+
+<div class="pin-overlay" id="pinOverlay">
+  <div class="pin-box">
+    <div class="pin-logo">🔒</div>
+    <div class="pin-title">Matrix Stationery & Xerox</div>
+    <div class="pin-sub" id="pinSub">Enter 4-digit PIN to continue</div>
+    <input type="password" inputmode="numeric" maxlength="4" id="pinInput" class="pin-input" autocomplete="off">
+    <div class="pin-error hidden" id="pinError">Incorrect PIN. Try again.</div>
+    <button class="btn btn-primary btn-block" id="btnUnlock" style="margin-top:14px;" disabled>Connecting…</button>
+  </div>
+</div>
 
 <div id="app">
 
@@ -336,6 +358,7 @@ body.modal-open{overflow:hidden;}
       <input type="file" accept="image/*" id="inputLogoGallery" class="hidden">
     </div>
     <div class="field"><label>Low Stock Alert Threshold</label><input type="number" id="settingsLowStock" min="0" value="5"></div>
+    <div class="field"><label>App PIN (4 digits)</label><input type="password" inputmode="numeric" maxlength="4" id="settingsPin" placeholder="1234"></div>
     <div class="field">
       <label>Payment QR Code (for Online payments)</label>
       <div class="img-preview" id="settingsQrPreview"></div>
@@ -421,6 +444,13 @@ body.modal-open{overflow:hidden;}
 
 <script>
 /* ================= FIREBASE ================= */
+if (window.__fbLoadFailed || typeof firebase === 'undefined') {
+  document.getElementById('pinSub').textContent = 'App library failed to load — disable any ad-blocker/VPN, check your internet, and reload.';
+  document.getElementById('btnUnlock').textContent = 'Retry';
+  document.getElementById('btnUnlock').disabled = false;
+  document.getElementById('btnUnlock').onclick = () => location.reload();
+  throw new Error('Firebase SDK failed to load from gstatic.com — see message on screen.');
+}
 const firebaseConfig = {
   apiKey: "AIzaSyCUWsRKMgZbZAUUiUnwbX8zdc3cEdp0WxM",
   authDomain: "my-matrix-xerox.firebaseapp.com",
@@ -444,6 +474,8 @@ let editingItemId = null;
 let pendingImageFile = null, pendingLogoFile = null, pendingQrFile = null, qrRemoved = false;
 let reportMode = 'daily';
 let lastReportSnap = null;
+let settingsLoaded = false;
+let pinUnlocked = sessionStorage.getItem('matrixPinUnlocked') === '1';
 
 const SEED_CATEGORIES = {
   'Stationery': ['Pens & Pencils','Notebooks & Diaries','Files & Folders','Art & Craft','Adhesives & Tapes','Office Supplies'],
@@ -462,8 +494,39 @@ function toast(msg){
 function openModal(id){ $(id).classList.add('open'); document.body.classList.add('modal-open'); }
 function closeModal(id){ $(id).classList.remove('open'); document.body.classList.remove('modal-open'); }
 
+/* ================= PIN LOCK ================= */
+function tryShowLock(){
+  if(pinUnlocked){ $('pinOverlay').classList.add('hidden'); return; }
+  $('pinOverlay').classList.remove('hidden');
+  if(settingsLoaded){ $('btnUnlock').disabled = false; $('btnUnlock').textContent = 'Unlock'; $('pinSub').textContent = 'Enter 4-digit PIN to continue'; }
+}
+function attemptUnlock(){
+  if(!settingsLoaded) return;
+  const entered = $('pinInput').value.trim();
+  const correct = settings.pin || '1234';
+  if(entered === correct){
+    pinUnlocked = true;
+    sessionStorage.setItem('matrixPinUnlocked','1');
+    $('pinOverlay').classList.add('hidden');
+    $('pinError').classList.add('hidden');
+  } else {
+    $('pinError').classList.remove('hidden');
+    $('pinInput').value = '';
+    $('pinInput').focus();
+  }
+}
+$('btnUnlock').onclick = attemptUnlock;
+$('pinInput').addEventListener('keydown', e => { if(e.key==='Enter') attemptUnlock(); });
+tryShowLock();
+
 /* ================= AUTH & LISTENERS ================= */
-auth.signInAnonymously().catch(err => { console.error(err); toast('Could not connect. Check your internet.'); });
+auth.signInAnonymously().catch(err => {
+  console.error(err);
+  $('pinSub').textContent = 'Could not connect — check your Firebase setup or internet.';
+  $('btnUnlock').textContent = 'Retry';
+  $('btnUnlock').disabled = false;
+  $('btnUnlock').onclick = () => location.reload();
+});
 auth.onAuthStateChanged(user => { if(user) initListeners(); });
 
 function initListeners(){
@@ -473,7 +536,8 @@ function initListeners(){
   });
   db.collection('meta').doc('settings').onSnapshot(doc=>{
     if(doc.exists){ settings = doc.data(); }
-    else { db.collection('meta').doc('settings').set({lowStockThreshold:5, currency:'₹', qrUrl:''}); }
+    else { db.collection('meta').doc('settings').set({lowStockThreshold:5, currency:'₹', qrUrl:'', pin:'1234'}); }
+    settingsLoaded = true; tryShowLock();
     renderDashboard(); renderItems(); renderBillList();
   });
   db.collection('items').orderBy('name').onSnapshot(snap=>{
@@ -547,11 +611,14 @@ $('btnSettings').onclick = () => {
   $('settingsShopName').value = shopProfile.name || '';
   $('settingsLogoPreview').innerHTML = shopProfile.logoUrl ? `<img src="${shopProfile.logoUrl}">` : '';
   $('settingsLowStock').value = settings.lowStockThreshold ?? 5;
+  $('settingsPin').value = settings.pin || '1234';
   $('settingsQrPreview').innerHTML = settings.qrUrl ? `<img src="${settings.qrUrl}">` : '';
   openModal('modal-settings');
 };
 $('btnRemoveQr').onclick = () => { pendingQrFile=null; qrRemoved=true; $('settingsQrPreview').innerHTML=''; };
 $('btnSaveSettings').onclick = async () => {
+  const pinVal = $('settingsPin').value.trim();
+  if(!/^\d{4}$/.test(pinVal)){ toast('PIN must be exactly 4 digits'); return; }
   const btn = $('btnSaveSettings'); btn.disabled = true; btn.textContent = 'Saving…';
   try{
     let logoUrl = shopProfile.logoUrl || '';
@@ -565,7 +632,7 @@ $('btnSaveSettings').onclick = async () => {
     });
     await db.collection('meta').doc('settings').set({
       lowStockThreshold: parseInt($('settingsLowStock').value,10) || 0,
-      currency: '₹', qrUrl
+      currency: '₹', qrUrl, pin: pinVal
     }, {merge:true});
     toast('Settings saved'); closeModal('modal-settings');
   } catch(err){ console.error(err); toast('Failed to save settings'); }
