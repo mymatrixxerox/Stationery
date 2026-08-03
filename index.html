@@ -16,6 +16,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js" onerror="window.__fbLoadFailed=true"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-storage-compat.js" onerror="window.__fbLoadFailed=true"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js" onerror="window.__fbLoadFailed=true"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
 <style>
 :root{
@@ -357,6 +358,11 @@ body.modal-open{overflow:hidden;}
   <div class="modal-box">
     <div class="modal-head"><h3>Shop Settings</h3><button class="modal-close" data-modal="modal-settings">✕</button></div>
     <div class="field"><label>Shop Name</label><input id="settingsShopName" placeholder="Your shop name"></div>
+    <div class="field"><label>Shop Address (shown on invoices)</label><input id="settingsShopAddress" placeholder="Shop address"></div>
+    <div class="field-row">
+      <div class="field"><label>Phone</label><input id="settingsShopPhone" placeholder="Contact number"></div>
+      <div class="field"><label>Email</label><input id="settingsShopEmail" placeholder="Contact email"></div>
+    </div>
     <div class="field">
       <label>Shop Logo</label>
       <div class="img-preview" id="settingsLogoPreview"></div>
@@ -462,7 +468,20 @@ body.modal-open{overflow:hidden;}
       <div class="success-amt mono" id="successAmount">₹0.00</div>
       <div class="muted small" id="successMode">via Cash</div>
     </div>
-    <button class="btn btn-primary btn-block" id="btnNewBill" style="margin-top:16px;">Start New Bill</button>
+    <button class="btn btn-outline btn-block" id="btnInvoiceFromSuccess" style="margin-top:16px;">🧾 Generate Invoice (PDF)</button>
+    <button class="btn btn-primary btn-block" id="btnNewBill" style="margin-top:8px;">Start New Bill</button>
+  </div>
+</div>
+
+<!-- MODAL: Invoice (Bill To + generate) -->
+<div class="modal-overlay" id="modal-invoice">
+  <div class="modal-box">
+    <div class="modal-head"><h3>Generate Invoice</h3><button class="modal-close" data-modal="modal-invoice">✕</button></div>
+    <p class="muted small">Customer details are optional — leave blank for a walk-in sale.</p>
+    <div class="field"><label>Customer Name</label><input id="invCustName" placeholder="Optional"></div>
+    <div class="field"><label>Customer Phone</label><input id="invCustPhone" placeholder="Optional"></div>
+    <div class="field"><label>Customer Address</label><input id="invCustAddress" placeholder="Optional"></div>
+    <button class="btn btn-primary btn-block" id="btnGenerateInvoice">⬇ Generate & Download PDF</button>
   </div>
 </div>
 
@@ -500,8 +519,15 @@ let editingItemId = null;
 let pendingImageFile = null, pendingLogoFile = null, pendingQrFile = null, qrRemoved = false;
 let reportMode = 'daily';
 let lastReportSnap = null;
+let reportSalesById = {};
 let settingsLoaded = false;
 let pinUnlocked = sessionStorage.getItem('matrixPinUnlocked') === '1';
+let lastSale = null;
+let invoiceSaleData = null;
+
+const DEFAULT_ADDRESS = '#2E, Thiruvalluvar Street, Thiruvalluvar Nagar, Perungudi, Chennai - 600096';
+const DEFAULT_PHONE = '090871 26290';
+const DEFAULT_EMAIL = 'mymatrixxerox@gmail.com';
 
 const SEED_CATEGORIES = {
   'Stationery': ['Pens & Pencils','Notebooks & Diaries','Files & Folders','Art & Craft','Adhesives & Tapes','Office Supplies'],
@@ -654,6 +680,9 @@ function renderShopHeader(){
 $('btnSettings').onclick = () => {
   pendingLogoFile=null; pendingQrFile=null; qrRemoved=false;
   $('settingsShopName').value = shopProfile.name || '';
+  $('settingsShopAddress').value = shopProfile.address || DEFAULT_ADDRESS;
+  $('settingsShopPhone').value = shopProfile.phone || DEFAULT_PHONE;
+  $('settingsShopEmail').value = shopProfile.email || DEFAULT_EMAIL;
   $('settingsLogoPreview').innerHTML = shopProfile.logoUrl ? `<img src="${shopProfile.logoUrl}">` : '';
   $('settingsLowStock').value = settings.lowStockThreshold ?? 5;
   $('settingsPin').value = settings.pin || '1234';
@@ -680,6 +709,9 @@ $('btnSaveSettings').onclick = async () => {
     if(qrRemoved) qrUrl = '';
     await withTimeout(db.collection('meta').doc('shop').set({
       name: $('settingsShopName').value.trim() || 'My Shop',
+      address: $('settingsShopAddress').value.trim() || DEFAULT_ADDRESS,
+      phone: $('settingsShopPhone').value.trim() || DEFAULT_PHONE,
+      email: $('settingsShopEmail').value.trim() || DEFAULT_EMAIL,
       logoUrl, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     }), 15000, 'Save');
     await withTimeout(db.collection('meta').doc('settings').set({
@@ -889,6 +921,7 @@ async function recordSale(paymentMode){
       batch.update(db.collection('items').doc(c.itemId), { stockQty: newQty });
     });
     await batch.commit();
+    lastSale = { id: saleRef.id, items: itemsSnapshot, total, paymentMode };
     showSuccess(total, paymentMode);
     clearCart();
   } catch(err){ console.error(err); toast('Failed to record sale. Check your connection.'); }
@@ -899,6 +932,122 @@ function showSuccess(total, mode){
   openModal('modal-success');
 }
 $('btnNewBill').onclick = () => { closeModal('modal-success'); switchView('bill'); };
+
+/* ================= INVOICE / PDF ================= */
+$('btnInvoiceFromSuccess').onclick = () => { if(lastSale) openInvoiceModal(lastSale); else toast('No bill to invoice'); };
+function openInvoiceModal(saleData){
+  invoiceSaleData = saleData;
+  $('invCustName').value = ''; $('invCustPhone').value = ''; $('invCustAddress').value = '';
+  openModal('modal-invoice');
+}
+async function getNextInvoiceNumber(){
+  const counterRef = db.collection('meta').doc('invoiceCounter');
+  const next = await db.runTransaction(async (tx) => {
+    const doc = await tx.get(counterRef);
+    const current = doc.exists ? (doc.data().value || 0) : 0;
+    const n = current + 1;
+    tx.set(counterRef, { value: n }, { merge: true });
+    return n;
+  });
+  return 'INV-' + String(next).padStart(5, '0');
+}
+function urlToDataURL(url){
+  return fetch(url).then(r => r.blob()).then(blob => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  }));
+}
+async function generateInvoicePdf(sale, invoiceNo, customer){
+  if(!window.jspdf){ throw new Error('PDF library failed to load. Check your internet and try again.'); }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const address = shopProfile.address || DEFAULT_ADDRESS;
+  const phone = shopProfile.phone || DEFAULT_PHONE;
+  const email = shopProfile.email || DEFAULT_EMAIL;
+
+  let textX = 15, y = 18;
+  if(shopProfile.logoUrl){
+    try{
+      const dataUrl = await urlToDataURL(shopProfile.logoUrl);
+      doc.addImage(dataUrl, 'JPEG', 15, 12, 22, 22);
+      textX = 42;
+    } catch(e){ console.warn('Logo embed failed, continuing without it', e); }
+  }
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+  doc.text('Matrix Stationery & Xerox', textX, y);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+  y += 6;
+  const addrLines = doc.splitTextToSize(address, 150);
+  doc.text(addrLines, textX, y);
+  y += addrLines.length * 4.2;
+  doc.text(`Cell: ${phone}   Email: ${email}`, textX, y);
+
+  y = Math.max(y + 10, 42);
+  doc.setDrawColor(180); doc.line(15, y, 195, y); y += 8;
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(13);
+  doc.text('INVOICE', 15, y);
+  doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+  doc.text(`Invoice No: ${invoiceNo}`, 140, y - 4);
+  doc.text(`Date: ${new Date().toLocaleDateString('en-IN')}`, 140, y + 1);
+  y += 9;
+
+  doc.setFont('helvetica', 'bold'); doc.text('Bill To:', 15, y); y += 5;
+  doc.setFont('helvetica', 'normal');
+  if(customer.name){ doc.text(customer.name, 15, y); y += 5; }
+  if(customer.phone){ doc.text('Ph: ' + customer.phone, 15, y); y += 5; }
+  if(customer.address){ const cl = doc.splitTextToSize(customer.address, 100); doc.text(cl, 15, y); y += cl.length * 4.5; }
+  if(!customer.name && !customer.phone && !customer.address){ doc.text('Walk-in Customer', 15, y); y += 5; }
+
+  y += 5;
+  doc.setFillColor(18, 53, 36); doc.rect(15, y, 180, 8, 'F');
+  doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(10);
+  doc.text('Item', 18, y + 5.5);
+  doc.text('Qty', 122, y + 5.5);
+  doc.text('Rate', 145, y + 5.5);
+  doc.text('Amount', 172, y + 5.5);
+  y += 8;
+  doc.setTextColor(0); doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5);
+  (sale.items || []).forEach(it => {
+    if(y > 270){ doc.addPage(); y = 20; }
+    const nameLines = doc.splitTextToSize(String(it.name), 95);
+    doc.text(nameLines, 18, y + 5.5);
+    doc.text(String(it.qty), 122, y + 5.5);
+    doc.text(formatMoney(it.mrpRate), 145, y + 5.5);
+    doc.text(formatMoney(it.mrpRate * it.qty), 172, y + 5.5);
+    const rowH = Math.max(8, nameLines.length * 4.5 + 2);
+    doc.setDrawColor(220); doc.line(15, y + rowH, 195, y + rowH);
+    y += rowH;
+  });
+  y += 6;
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+  doc.text(`Total: ${formatMoney(sale.total)}`, 140, y); y += 7;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+  doc.text(`Payment Mode: ${sale.paymentMode || '-'}`, 15, y);
+  y += 14;
+  doc.setFontSize(9); doc.setTextColor(120);
+  doc.text('Thank you for your business!', 15, y);
+
+  doc.save(`Invoice-${invoiceNo}.pdf`);
+}
+$('btnGenerateInvoice').onclick = async () => {
+  if(!invoiceSaleData){ toast('No bill data found'); return; }
+  const btn = $('btnGenerateInvoice'); btn.disabled = true; btn.textContent = 'Generating…';
+  try{
+    const invoiceNo = await withTimeout(getNextInvoiceNumber(), 15000, 'Invoice number');
+    const customer = {
+      name: $('invCustName').value.trim(),
+      phone: $('invCustPhone').value.trim(),
+      address: $('invCustAddress').value.trim()
+    };
+    await generateInvoicePdf(invoiceSaleData, invoiceNo, customer);
+    toast('Invoice downloaded');
+    closeModal('modal-invoice');
+  } catch(err){ console.error(err); toast(err.message || 'Failed to generate invoice'); }
+  btn.disabled = false; btn.textContent = '⬇ Generate & Download PDF';
+};
 
 /* ================= DASHBOARD ================= */
 function renderDashboard(){
@@ -946,12 +1095,14 @@ async function loadReport(){
   let snap;
   try{ snap = await query.get(); } catch(err){ console.error(err); toast('Failed to load report'); return; }
   lastReportSnap = snap;
+  reportSalesById = {};
   let soldCount=0, revenue=0, cost=0;
   const rows=[];
   const otherRows=[];
   let otherTotal=0;
   snap.forEach(doc=>{
     const d = doc.data();
+    reportSalesById[doc.id] = d;
     let qtySum=0;
     const t = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate() : new Date();
     const timeStr = t.toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'});
@@ -969,12 +1120,20 @@ async function loadReport(){
   $('reportProfit').textContent = formatMoney(revenue-cost);
   $('reportTableBody').innerHTML = rows.length ? rows.map(r=>`
     <tr><td>${r.time}</td><td>${r.items}</td><td class="mono">${formatMoney(r.total)}</td><td>${r.mode}</td>
-    <td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteSale('${r.id}')">🗑</button></td></tr>
+    <td style="white-space:nowrap;">
+      <button class="btn btn-secondary" style="padding:4px 8px;font-size:11px;" onclick="openInvoiceFromReport('${r.id}')">🧾</button>
+      <button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteSale('${r.id}')">🗑</button>
+    </td></tr>
   `).join('') : `<tr><td colspan="5" class="muted">No sales in this period</td></tr>`;
   $('otherTransTableBody').innerHTML = otherRows.length ? otherRows.map(r=>`
     <tr><td>${r.time}</td><td>${escapeHtml(r.desc)}</td><td class="mono">${formatMoney(r.amount)}</td></tr>
   `).join('') : `<tr><td colspan="3" class="muted">No other transactions in this period</td></tr>`;
   $('otherTransTotal').textContent = formatMoney(otherTotal);
+}
+function openInvoiceFromReport(saleId){
+  const d = reportSalesById[saleId];
+  if(!d){ toast('Bill data not found'); return; }
+  openInvoiceModal({ id: saleId, items: d.items||[], total: d.total||0, paymentMode: d.paymentMode||'-' });
 }
 async function deleteSale(saleId){
   if(!confirm('Permanently delete this bill? This cannot be undone. Stock quantities for its items will be added back.')) return;
@@ -1015,6 +1174,15 @@ $('btnDownloadCsv').onclick = () => {
 /* ================= MODAL CLOSE WIRING ================= */
 document.querySelectorAll('.modal-close').forEach(b => b.onclick = () => closeModal(b.dataset.modal));
 document.querySelectorAll('.modal-overlay').forEach(ov => ov.onclick = (e) => { if(e.target===ov) closeModal(ov.id); });
+
+/* ================= LEAVE-SITE CONFIRMATION ================= */
+/* Browsers control the exact wording of this dialog and won't let us customize it —
+   but choosing "Cancel" always keeps you on this exact page with everything intact,
+   since the page never actually unloads unless you confirm leaving. */
+window.addEventListener('beforeunload', function(e){
+  e.preventDefault();
+  e.returnValue = '';
+});
 
 /* ================= SERVICE WORKER (offline app shell) ================= */
 if('serviceWorker' in navigator){
