@@ -1,4 +1,4 @@
-const CACHE_NAME = 'matrix-billing-v1';
+const CACHE_NAME = 'matrix-billing-v2';
 const ASSETS = ['./', './index.html', './manifest.json'];
 
 self.addEventListener('install', (e) => {
@@ -18,21 +18,17 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   // Never cache Firebase/Firestore/Storage traffic — always go to network for live data.
-  if (e.request.url.includes('firestore.googleapis.com') ||
-      e.request.url.includes('firebasestorage.googleapis.com') ||
-      e.request.url.includes('googleapis.com')) {
-    return;
-  }
+  if (e.request.url.includes('googleapis.com')) return;
+
+  // Network-first: always get the latest file when online.
+  // Falls back to the cached copy only if there's no network (offline).
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const networkFetch = fetch(e.request)
-        .then((res) => {
-          const resClone = res.clone();
-          caches.open(CACHE_NAME).then((c) => c.put(e.request, resClone));
-          return res;
-        })
-        .catch(() => cached);
-      return cached || networkFetch;
-    })
+    fetch(e.request)
+      .then((res) => {
+        const resClone = res.clone();
+        caches.open(CACHE_NAME).then((c) => c.put(e.request, resClone));
+        return res;
+      })
+      .catch(() => caches.match(e.request))
   );
 });

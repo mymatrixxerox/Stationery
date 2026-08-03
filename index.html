@@ -10,7 +10,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="./manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js" onerror="window.__fbLoadFailed=true"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js" onerror="window.__fbLoadFailed=true"></script>
@@ -34,8 +34,8 @@
   --danger-100:#F8E4E1;
   --radius:16px;
   --shadow: 0 1px 2px rgba(18,53,36,.07), 0 10px 28px -14px rgba(18,53,36,.28);
-  --font-display:'Fraunces',serif;
-  --font-body:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+  --font-display:'Poppins',sans-serif;
+  --font-body:'Poppins',-apple-system,BlinkMacSystemFont,sans-serif;
   --font-mono:'JetBrains Mono',monospace;
 }
 *{box-sizing:border-box;}
@@ -253,6 +253,7 @@ body.modal-open{overflow:hidden;}
     <input type="password" inputmode="numeric" maxlength="4" id="pinInput" class="pin-input" autocomplete="off">
     <div class="pin-error hidden" id="pinError">Incorrect PIN. Try again.</div>
     <button class="btn btn-primary btn-block" id="btnUnlock" style="margin-top:14px;" disabled>Connecting…</button>
+    <div class="pin-error hidden" id="pinSlowHint" style="color:var(--muted);">Still connecting… this can take a few extra seconds on first load.</div>
   </div>
 </div>
 
@@ -493,12 +494,18 @@ function toast(msg){
 }
 function openModal(id){ $(id).classList.add('open'); document.body.classList.add('modal-open'); }
 function closeModal(id){ $(id).classList.remove('open'); document.body.classList.remove('modal-open'); }
+function withTimeout(promise, ms, label){
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} is taking too long. Check your internet or Firebase setup and try again.`)), ms))
+  ]);
+}
 
 /* ================= PIN LOCK ================= */
 function tryShowLock(){
   if(pinUnlocked){ $('pinOverlay').classList.add('hidden'); return; }
   $('pinOverlay').classList.remove('hidden');
-  if(settingsLoaded){ $('btnUnlock').disabled = false; $('btnUnlock').textContent = 'Unlock'; $('pinSub').textContent = 'Enter 4-digit PIN to continue'; }
+  if(settingsLoaded){ $('btnUnlock').disabled = false; $('btnUnlock').textContent = 'Login'; $('pinSub').textContent = 'Enter 4-digit PIN to continue'; $('pinSlowHint').classList.add('hidden'); }
 }
 function attemptUnlock(){
   if(!settingsLoaded) return;
@@ -518,6 +525,7 @@ function attemptUnlock(){
 $('btnUnlock').onclick = attemptUnlock;
 $('pinInput').addEventListener('keydown', e => { if(e.key==='Enter') attemptUnlock(); });
 tryShowLock();
+setTimeout(() => { if(!settingsLoaded && !pinUnlocked) $('pinSlowHint').classList.remove('hidden'); }, 6000);
 
 /* ================= AUTH & LISTENERS ================= */
 auth.signInAnonymously().catch(err => {
@@ -622,20 +630,20 @@ $('btnSaveSettings').onclick = async () => {
   const btn = $('btnSaveSettings'); btn.disabled = true; btn.textContent = 'Saving…';
   try{
     let logoUrl = shopProfile.logoUrl || '';
-    if(pendingLogoFile) logoUrl = await uploadImage(`logo/logo_${Date.now()}.jpg`, pendingLogoFile);
+    if(pendingLogoFile) logoUrl = await withTimeout(uploadImage(`logo/logo_${Date.now()}.jpg`, pendingLogoFile), 20000, 'Logo upload');
     let qrUrl = settings.qrUrl || '';
-    if(pendingQrFile) qrUrl = await uploadImage(`qr/qr_${Date.now()}.jpg`, pendingQrFile);
+    if(pendingQrFile) qrUrl = await withTimeout(uploadImage(`qr/qr_${Date.now()}.jpg`, pendingQrFile), 20000, 'QR upload');
     if(qrRemoved) qrUrl = '';
-    await db.collection('meta').doc('shop').set({
+    await withTimeout(db.collection('meta').doc('shop').set({
       name: $('settingsShopName').value.trim() || 'My Shop',
       logoUrl, updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
-    await db.collection('meta').doc('settings').set({
+    }), 15000, 'Save');
+    await withTimeout(db.collection('meta').doc('settings').set({
       lowStockThreshold: parseInt($('settingsLowStock').value,10) || 0,
       currency: '₹', qrUrl, pin: pinVal
-    }, {merge:true});
+    }, {merge:true}), 15000, 'Save');
     toast('Settings saved'); closeModal('modal-settings');
-  } catch(err){ console.error(err); toast('Failed to save settings'); }
+  } catch(err){ console.error(err); toast(err.message || 'Failed to save settings'); }
   btn.disabled = false; btn.textContent = 'Save Settings';
 };
 
@@ -720,19 +728,19 @@ $('itemForm').onsubmit = async (e) => {
   try{
     let imageUrl = editingItemId ? (items.find(i=>i.id===editingItemId)?.imageUrl || '') : '';
     if(pendingImageFile){
-      imageUrl = await uploadImage(`items/item_${Date.now()}.jpg`, pendingImageFile);
+      imageUrl = await withTimeout(uploadImage(`items/item_${Date.now()}.jpg`, pendingImageFile), 20000, 'Image upload');
     }
     const data = { name, category, subCategory, stockRate, mrpRate, stockQty, imageUrl, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
     if(editingItemId){
-      await db.collection('items').doc(editingItemId).update(data);
+      await withTimeout(db.collection('items').doc(editingItemId).update(data), 15000, 'Save');
       toast('Item updated');
     } else {
       data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
-      await db.collection('items').add(data);
+      await withTimeout(db.collection('items').add(data), 15000, 'Save');
       toast('Item added');
     }
     closeModal('modal-item');
-  } catch(err){ console.error(err); toast('Failed to save item'); }
+  } catch(err){ console.error(err); toast(err.message || 'Failed to save item'); }
   btn.disabled = false; btn.textContent = 'Save Item';
 };
 $('btnDeleteItem').onclick = async () => {
