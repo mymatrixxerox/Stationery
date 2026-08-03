@@ -296,6 +296,7 @@ body.modal-open{overflow:hidden;}
   <!-- BILL -->
   <div class="view" id="view-bill">
     <div class="searchbar">🔎 <input id="billSearchInput" placeholder="Search items to add…"></div>
+    <button class="btn btn-secondary btn-block" id="btnCashTransfer" style="margin-bottom:10px;">💸 Cash Transfer</button>
     <div id="billItemsList"></div>
     <div class="receipt">
       <div class="receipt-title">Current Bill</div>
@@ -411,6 +412,16 @@ body.modal-open{overflow:hidden;}
       <button type="submit" class="btn btn-primary btn-block" id="btnSaveItem">Save Item</button>
       <button type="button" class="btn btn-danger btn-block hidden" id="btnDeleteItem" style="margin-top:8px;">Delete Item</button>
     </form>
+  </div>
+</div>
+
+<!-- MODAL: Cash Transfer -->
+<div class="modal-overlay" id="modal-cash-transfer">
+  <div class="modal-box">
+    <div class="modal-head"><h3>Cash Transfer</h3><button class="modal-close" data-modal="modal-cash-transfer">✕</button></div>
+    <div class="field"><label>Transfer Amount (₹) *</label><input type="number" id="cashTransferAmount" min="1" step="1" placeholder="e.g. 500" autocomplete="off"></div>
+    <p class="muted small">A ₹5 commission cost is auto-applied — the rest of the amount is recorded as your profit on this bill. No stock is affected.</p>
+    <button class="btn btn-primary btn-block" id="btnAddCashTransfer" style="margin-top:6px;">Add to Bill</button>
   </div>
 </div>
 
@@ -786,6 +797,21 @@ function addToCart(item){
   else cart.push({ itemId:item.id, name:item.name, mrpRate:Number(item.mrpRate||0), stockRate:Number(item.stockRate||0), qty:1 });
   renderCart();
 }
+const CASH_TRANSFER_COMMISSION = 5;
+$('btnCashTransfer').onclick = () => { $('cashTransferAmount').value=''; openModal('modal-cash-transfer'); };
+$('btnAddCashTransfer').onclick = () => {
+  const amt = parseFloat($('cashTransferAmount').value);
+  if(isNaN(amt) || amt<=0){ toast('Enter a valid transfer amount'); return; }
+  if(amt <= CASH_TRANSFER_COMMISSION){ toast(`Amount must be more than ₹${CASH_TRANSFER_COMMISSION}`); return; }
+  cart.push({
+    itemId: 'cash-transfer-'+Date.now(),
+    name: `Cash Transfer (₹${amt})`,
+    mrpRate: amt, stockRate: CASH_TRANSFER_COMMISSION, qty: 1, isService: true
+  });
+  renderCart();
+  closeModal('modal-cash-transfer');
+  toast('Cash transfer added to bill');
+};
 function changeQty(id, delta){
   const c = cart.find(c=>c.itemId===id); if(!c) return;
   c.qty += delta;
@@ -795,7 +821,12 @@ function changeQty(id, delta){
 function clearCart(){ cart=[]; renderCart(); }
 function cartTotal(){ return cart.reduce((s,c)=>s+c.mrpRate*c.qty,0); }
 function renderCart(){
-  $('cartList').innerHTML = cart.length ? cart.map(c=>`
+  $('cartList').innerHTML = cart.length ? cart.map(c=> c.isService ? `
+    <div class="cart-row">
+      <div class="cart-name">${escapeHtml(c.name)} <span class="muted small">(₹${CASH_TRANSFER_COMMISSION} commission)</span></div>
+      <button class="btn btn-secondary" style="padding:4px 10px;" onclick="changeQty('${c.itemId}',-1)">Remove</button>
+      <div class="cart-amount mono">₹${(c.mrpRate*c.qty).toFixed(2)}</div>
+    </div>` : `
     <div class="cart-row">
       <div class="cart-name">${escapeHtml(c.name)}</div>
       <div class="qty-stepper">
@@ -831,12 +862,13 @@ async function recordSale(paymentMode){
   const dateKey = now.toISOString().slice(0,10);
   const monthKey = dateKey.slice(0,7);
   const total = cartTotal();
-  const itemsSnapshot = cart.map(c=>({ itemId:c.itemId, name:c.name, qty:c.qty, mrpRate:c.mrpRate, stockRate:c.stockRate }));
+  const itemsSnapshot = cart.map(c=>({ itemId:c.itemId, name:c.name, qty:c.qty, mrpRate:c.mrpRate, stockRate:c.stockRate, isService: !!c.isService }));
   try{
     const batch = db.batch();
     const saleRef = db.collection('sales').doc();
     batch.set(saleRef, { items: itemsSnapshot, total, paymentMode, dateKey, monthKey, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
     cart.forEach(c=>{
+      if(c.isService) return;
       const currentItem = items.find(i=>i.id===c.itemId);
       const newQty = Math.max(0, (currentItem?.stockQty||0) - c.qty);
       batch.update(db.collection('items').doc(c.itemId), { stockQty: newQty });
@@ -926,6 +958,7 @@ async function deleteSale(saleId){
     const d = saleDoc.data();
     const batch = db.batch();
     (d.items||[]).forEach(i=>{
+      if(i.isService) return;
       const currentItem = items.find(it=>it.id===i.itemId);
       if(currentItem){ batch.update(db.collection('items').doc(i.itemId), { stockQty: (currentItem.stockQty||0) + i.qty }); }
     });
