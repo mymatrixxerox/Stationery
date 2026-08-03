@@ -296,6 +296,7 @@ body.modal-open{overflow:hidden;}
   <!-- BILL -->
   <div class="view" id="view-bill">
     <div class="searchbar">🔎 <input id="billSearchInput" placeholder="Search items to add…"></div>
+    <button class="btn btn-secondary btn-block" id="btnOtherTransaction" style="margin-bottom:10px;">📝 Other Transaction</button>
     <div id="billItemsList"></div>
     <div class="receipt">
       <div class="receipt-title">Current Bill</div>
@@ -331,6 +332,14 @@ body.modal-open{overflow:hidden;}
         <thead><tr><th>Time</th><th>Items</th><th>Total</th><th>Mode</th><th></th></tr></thead>
         <tbody id="reportTableBody"><tr><td colspan="5" class="muted">No data</td></tr></tbody>
       </table>
+    </div>
+    <div class="section-title">Other Transactions</div>
+    <div class="card" style="overflow-x:auto;">
+      <table class="report-table">
+        <thead><tr><th>Time</th><th>Description</th><th>Amount</th></tr></thead>
+        <tbody id="otherTransTableBody"><tr><td colspan="3" class="muted">No data</td></tr></tbody>
+      </table>
+      <div style="display:flex;justify-content:space-between;padding-top:10px;font-weight:700;"><span>Total</span><span class="mono" id="otherTransTotal">₹0.00</span></div>
     </div>
   </div>
 
@@ -411,6 +420,16 @@ body.modal-open{overflow:hidden;}
       <button type="submit" class="btn btn-primary btn-block" id="btnSaveItem">Save Item</button>
       <button type="button" class="btn btn-danger btn-block hidden" id="btnDeleteItem" style="margin-top:8px;">Delete Item</button>
     </form>
+  </div>
+</div>
+
+<!-- MODAL: Other Transaction -->
+<div class="modal-overlay" id="modal-other-transaction">
+  <div class="modal-box">
+    <div class="modal-head"><h3>Other Transaction</h3><button class="modal-close" data-modal="modal-other-transaction">✕</button></div>
+    <div class="field"><label>Description *</label><input type="text" id="otherTransDesc" placeholder="e.g. Custom lamination job" autocomplete="off"></div>
+    <div class="field"><label>Amount (₹) *</label><input type="number" id="otherTransAmount" min="1" step="0.01" placeholder="e.g. 150" autocomplete="off"></div>
+    <button class="btn btn-primary btn-block" id="btnAddOtherTransaction" style="margin-top:6px;">Add to Bill</button>
   </div>
 </div>
 
@@ -797,6 +816,17 @@ function addToCart(item){
   else cart.push({ itemId:item.id, name:item.name, mrpRate:Number(item.mrpRate||0), stockRate:Number(item.stockRate||0), qty:1 });
   renderCart();
 }
+$('btnOtherTransaction').onclick = () => { $('otherTransDesc').value=''; $('otherTransAmount').value=''; openModal('modal-other-transaction'); };
+$('btnAddOtherTransaction').onclick = () => {
+  const desc = $('otherTransDesc').value.trim();
+  const amt = parseFloat($('otherTransAmount').value);
+  if(!desc){ toast('Enter a description'); return; }
+  if(isNaN(amt) || amt<=0){ toast('Enter a valid amount'); return; }
+  cart.push({ itemId: 'other-'+Date.now(), name: desc, mrpRate: amt, stockRate: 0, qty: 1, isOther: true });
+  renderCart();
+  closeModal('modal-other-transaction');
+  toast('Added to bill');
+};
 function changeQty(id, delta){
   const c = cart.find(c=>c.itemId===id); if(!c) return;
   c.qty += delta;
@@ -806,7 +836,12 @@ function changeQty(id, delta){
 function clearCart(){ cart=[]; renderCart(); }
 function cartTotal(){ return cart.reduce((s,c)=>s+c.mrpRate*c.qty,0); }
 function renderCart(){
-  $('cartList').innerHTML = cart.length ? cart.map(c=>`
+  $('cartList').innerHTML = cart.length ? cart.map(c=> c.isOther ? `
+    <div class="cart-row">
+      <div class="cart-name">${escapeHtml(c.name)} <span class="muted small">(other)</span></div>
+      <button class="btn btn-secondary" style="padding:4px 10px;" onclick="changeQty('${c.itemId}',-1)">Remove</button>
+      <div class="cart-amount mono">₹${(c.mrpRate*c.qty).toFixed(2)}</div>
+    </div>` : `
     <div class="cart-row">
       <div class="cart-name">${escapeHtml(c.name)}</div>
       <div class="qty-stepper">
@@ -842,12 +877,13 @@ async function recordSale(paymentMode){
   const dateKey = now.toISOString().slice(0,10);
   const monthKey = dateKey.slice(0,7);
   const total = cartTotal();
-  const itemsSnapshot = cart.map(c=>({ itemId:c.itemId, name:c.name, qty:c.qty, mrpRate:c.mrpRate, stockRate:c.stockRate }));
+  const itemsSnapshot = cart.map(c=>({ itemId:c.itemId, name:c.name, qty:c.qty, mrpRate:c.mrpRate, stockRate:c.stockRate, isOther: !!c.isOther }));
   try{
     const batch = db.batch();
     const saleRef = db.collection('sales').doc();
     batch.set(saleRef, { items: itemsSnapshot, total, paymentMode, dateKey, monthKey, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
     cart.forEach(c=>{
+      if(c.isOther) return;
       const currentItem = items.find(i=>i.id===c.itemId);
       const newQty = Math.max(0, (currentItem?.stockQty||0) - c.qty);
       batch.update(db.collection('items').doc(c.itemId), { stockQty: newQty });
@@ -869,7 +905,7 @@ function renderDashboard(){
   const todayKey = new Date().toISOString().slice(0,10);
   db.collection('sales').where('dateKey','==',todayKey).get().then(snap=>{
     let soldCount=0, revenue=0;
-    snap.forEach(doc=>{ const d=doc.data(); (d.items||[]).forEach(i=>soldCount+=i.qty); revenue += d.total||0; });
+    snap.forEach(doc=>{ const d=doc.data(); (d.items||[]).forEach(i=>{ if(!i.isOther) soldCount+=i.qty; }); revenue += d.total||0; });
     $('statSoldToday').textContent = soldCount;
     $('statRevenueToday').textContent = formatMoney(revenue);
   }).catch(err=>console.error(err));
@@ -912,13 +948,20 @@ async function loadReport(){
   lastReportSnap = snap;
   let soldCount=0, revenue=0, cost=0;
   const rows=[];
+  const otherRows=[];
+  let otherTotal=0;
   snap.forEach(doc=>{
     const d = doc.data();
     let qtySum=0;
-    (d.items||[]).forEach(i=>{ qtySum+=i.qty; revenue += i.mrpRate*i.qty; cost += i.stockRate*i.qty; });
-    soldCount += qtySum;
     const t = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate() : new Date();
-    rows.push({ id: doc.id, time: t.toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'}), items: qtySum, total: d.total||0, mode: d.paymentMode||'—' });
+    const timeStr = t.toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'});
+    (d.items||[]).forEach(i=>{
+      revenue += i.mrpRate*i.qty; cost += i.stockRate*i.qty;
+      if(i.isOther){ otherTotal += i.mrpRate*i.qty; otherRows.push({ time: timeStr, desc: i.name, amount: i.mrpRate*i.qty }); }
+      else { qtySum += i.qty; }
+    });
+    soldCount += qtySum;
+    rows.push({ id: doc.id, time: timeStr, items: qtySum, total: d.total||0, mode: d.paymentMode||'—' });
   });
   $('reportSoldCount').textContent = soldCount;
   $('reportRevenue').textContent = formatMoney(revenue);
@@ -928,6 +971,10 @@ async function loadReport(){
     <tr><td>${r.time}</td><td>${r.items}</td><td class="mono">${formatMoney(r.total)}</td><td>${r.mode}</td>
     <td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteSale('${r.id}')">🗑</button></td></tr>
   `).join('') : `<tr><td colspan="5" class="muted">No sales in this period</td></tr>`;
+  $('otherTransTableBody').innerHTML = otherRows.length ? otherRows.map(r=>`
+    <tr><td>${r.time}</td><td>${escapeHtml(r.desc)}</td><td class="mono">${formatMoney(r.amount)}</td></tr>
+  `).join('') : `<tr><td colspan="3" class="muted">No other transactions in this period</td></tr>`;
+  $('otherTransTotal').textContent = formatMoney(otherTotal);
 }
 async function deleteSale(saleId){
   if(!confirm('Permanently delete this bill? This cannot be undone. Stock quantities for its items will be added back.')) return;
@@ -937,6 +984,7 @@ async function deleteSale(saleId){
     const d = saleDoc.data();
     const batch = db.batch();
     (d.items||[]).forEach(i=>{
+      if(i.isOther) return;
       const currentItem = items.find(it=>it.id===i.itemId);
       if(currentItem){ batch.update(db.collection('items').doc(i.itemId), { stockQty: (currentItem.stockQty||0) + i.qty }); }
     });
