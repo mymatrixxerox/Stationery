@@ -328,8 +328,8 @@ body.modal-open{overflow:hidden;}
     <div class="section-title">Bills in this period</div>
     <div class="card" style="overflow-x:auto;">
       <table class="report-table">
-        <thead><tr><th>Time</th><th>Items</th><th>Total</th><th>Mode</th></tr></thead>
-        <tbody id="reportTableBody"><tr><td colspan="4" class="muted">No data</td></tr></tbody>
+        <thead><tr><th>Time</th><th>Items</th><th>Total</th><th>Mode</th><th></th></tr></thead>
+        <tbody id="reportTableBody"><tr><td colspan="5" class="muted">No data</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -359,7 +359,13 @@ body.modal-open{overflow:hidden;}
       <input type="file" accept="image/*" id="inputLogoGallery" class="hidden">
     </div>
     <div class="field"><label>Low Stock Alert Threshold</label><input type="number" id="settingsLowStock" min="0" value="5"></div>
-    <div class="field"><label>App PIN (4 digits)</label><input type="password" inputmode="numeric" maxlength="4" id="settingsPin" placeholder="1234"></div>
+    <div class="field">
+      <label>App PIN (4 digits)</label>
+      <div style="display:flex;gap:8px;">
+        <input type="password" inputmode="numeric" maxlength="4" id="settingsPin" placeholder="1234" style="flex:1;">
+        <button type="button" class="btn btn-secondary" id="btnTogglePin" style="padding:0 14px;">👁</button>
+      </div>
+    </div>
     <div class="field">
       <label>Payment QR Code (for Online payments)</label>
       <div class="img-preview" id="settingsQrPreview"></div>
@@ -480,7 +486,8 @@ let pinUnlocked = sessionStorage.getItem('matrixPinUnlocked') === '1';
 
 const SEED_CATEGORIES = {
   'Stationery': ['Pens & Pencils','Notebooks & Diaries','Files & Folders','Art & Craft','Adhesives & Tapes','Office Supplies'],
-  'Xerox & Printing': ['B/W Printout','Color Printout','Spiral Binding','Lamination','Photocopy']
+  'Xerox & Printing': ['B/W Printout','Color Printout','Spiral Binding','Lamination','Photocopy'],
+  'Others': ['General']
 };
 
 /* ================= HELPERS ================= */
@@ -620,10 +627,17 @@ $('btnSettings').onclick = () => {
   $('settingsLogoPreview').innerHTML = shopProfile.logoUrl ? `<img src="${shopProfile.logoUrl}">` : '';
   $('settingsLowStock').value = settings.lowStockThreshold ?? 5;
   $('settingsPin').value = settings.pin || '1234';
+  $('settingsPin').type = 'password';
+  $('btnTogglePin').textContent = '👁';
   $('settingsQrPreview').innerHTML = settings.qrUrl ? `<img src="${settings.qrUrl}">` : '';
   openModal('modal-settings');
 };
 $('btnRemoveQr').onclick = () => { pendingQrFile=null; qrRemoved=true; $('settingsQrPreview').innerHTML=''; };
+$('btnTogglePin').onclick = () => {
+  const showing = $('settingsPin').type === 'text';
+  $('settingsPin').type = showing ? 'password' : 'text';
+  $('btnTogglePin').textContent = showing ? '👁' : '🙈';
+};
 $('btnSaveSettings').onclick = async () => {
   const pinVal = $('settingsPin').value.trim();
   if(!/^\d{4}$/.test(pinVal)){ toast('PIN must be exactly 4 digits'); return; }
@@ -893,15 +907,33 @@ async function loadReport(){
     (d.items||[]).forEach(i=>{ qtySum+=i.qty; revenue += i.mrpRate*i.qty; cost += i.stockRate*i.qty; });
     soldCount += qtySum;
     const t = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate() : new Date();
-    rows.push({ time: t.toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'}), items: qtySum, total: d.total||0, mode: d.paymentMode||'—' });
+    rows.push({ id: doc.id, time: t.toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'}), items: qtySum, total: d.total||0, mode: d.paymentMode||'—' });
   });
   $('reportSoldCount').textContent = soldCount;
   $('reportRevenue').textContent = formatMoney(revenue);
   $('reportCost').textContent = formatMoney(cost);
   $('reportProfit').textContent = formatMoney(revenue-cost);
   $('reportTableBody').innerHTML = rows.length ? rows.map(r=>`
-    <tr><td>${r.time}</td><td>${r.items}</td><td class="mono">${formatMoney(r.total)}</td><td>${r.mode}</td></tr>
-  `).join('') : `<tr><td colspan="4" class="muted">No sales in this period</td></tr>`;
+    <tr><td>${r.time}</td><td>${r.items}</td><td class="mono">${formatMoney(r.total)}</td><td>${r.mode}</td>
+    <td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteSale('${r.id}')">🗑</button></td></tr>
+  `).join('') : `<tr><td colspan="5" class="muted">No sales in this period</td></tr>`;
+}
+async function deleteSale(saleId){
+  if(!confirm('Permanently delete this bill? This cannot be undone. Stock quantities for its items will be added back.')) return;
+  try{
+    const saleDoc = await db.collection('sales').doc(saleId).get();
+    if(!saleDoc.exists){ toast('Bill already removed'); loadReport(); return; }
+    const d = saleDoc.data();
+    const batch = db.batch();
+    (d.items||[]).forEach(i=>{
+      const currentItem = items.find(it=>it.id===i.itemId);
+      if(currentItem){ batch.update(db.collection('items').doc(i.itemId), { stockQty: (currentItem.stockQty||0) + i.qty }); }
+    });
+    batch.delete(db.collection('sales').doc(saleId));
+    await withTimeout(batch.commit(), 15000, 'Delete');
+    toast('Bill deleted');
+    loadReport();
+  } catch(err){ console.error(err); toast(err.message || 'Failed to delete bill'); }
 }
 $('btnDownloadCsv').onclick = () => {
   if(!lastReportSnap || lastReportSnap.empty){ toast('No data to download for this period'); return; }
