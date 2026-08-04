@@ -252,10 +252,15 @@ body.modal-open{overflow:hidden;}
   <div class="pin-box">
     <div class="pin-logo">🔒</div>
     <div class="pin-title">Matrix Stationery & Xerox</div>
-    <div class="pin-sub" id="pinSub">Enter 4-digit PIN to continue</div>
-    <input type="password" inputmode="numeric" maxlength="4" id="pinInput" class="pin-input" autocomplete="off">
-    <div class="pin-error hidden" id="pinError">Incorrect PIN. Try again.</div>
-    <button class="btn btn-primary btn-block" id="btnUnlock" style="margin-top:14px;" disabled>Connecting…</button>
+    <div class="pin-sub" id="pinSub">Select role and enter password</div>
+    <div class="chip-row" style="justify-content:center;">
+      <button class="chip active" id="roleAdminBtn" type="button" title="Login as Admin — full access">🛠 Admin</button>
+      <button class="chip" id="roleUserBtn" type="button" title="Login as User — billing & reports only">🙋 User</button>
+    </div>
+    <input type="text" id="loginUsername" class="pin-input hidden" placeholder="Username" autocomplete="off" style="letter-spacing:normal;font-size:15px;text-align:left;padding-left:14px;margin-bottom:8px;">
+    <input type="password" inputmode="numeric" maxlength="4" id="pinInput" class="pin-input" autocomplete="off" placeholder="••••">
+    <div class="pin-error hidden" id="pinError">Incorrect details. Try again.</div>
+    <button class="btn btn-primary btn-block" id="btnUnlock" style="margin-top:14px;" disabled title="Log in">Connecting…</button>
     <div class="pin-error hidden" id="pinSlowHint" style="color:var(--muted);">Still connecting… this can take a few extra seconds on first load.</div>
   </div>
 </div>
@@ -272,7 +277,9 @@ body.modal-open{overflow:hidden;}
       <div class="topbar-title" id="shopNameText">Matrix Stationery & Xerox</div>
       <div class="topbar-sub">Billing & Inventory</div>
     </div>
-    <button class="iconbtn" id="btnLogout" title="Logout">🚪</button>
+    <button class="iconbtn" id="btnLogout" title="Logout">
+      <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+    </button>
     <button class="iconbtn" id="btnSettings" title="Shop settings">⚙️</button>
   </div>
 
@@ -345,6 +352,13 @@ body.modal-open{overflow:hidden;}
       </table>
       <div style="display:flex;justify-content:space-between;padding-top:10px;font-weight:700;"><span>Total</span><span class="mono" id="otherTransTotal">₹0.00</span></div>
     </div>
+    <div id="pieChartSection" class="hidden">
+      <div class="section-title">Item-wise Sales (This Month)</div>
+      <div class="card">
+        <div id="pieChartContainer" style="display:flex;flex-direction:column;align-items:center;gap:14px;"></div>
+      </div>
+      <button class="btn btn-outline btn-block" id="btnDownloadPieCsv" style="margin-top:10px;" title="Download this item-wise breakdown as a CSV file">⬇ Download Item-wise Report (CSV)</button>
+    </div>
   </div>
 
   <!-- Bottom nav -->
@@ -377,13 +391,25 @@ body.modal-open{overflow:hidden;}
       <input type="file" accept="image/*" id="inputLogoGallery" class="hidden">
     </div>
     <div class="field"><label>Low Stock Alert Threshold</label><input type="number" id="settingsLowStock" min="0" value="5"></div>
+    <div class="section-title" style="margin-top:4px;">Login Accounts</div>
     <div class="field">
-      <label>App PIN (4 digits)</label>
+      <label>Admin Password (4 digits)</label>
       <div style="display:flex;gap:8px;">
         <input type="password" inputmode="numeric" maxlength="4" id="settingsPin" placeholder="1234" style="flex:1;">
-        <button type="button" class="btn btn-secondary" id="btnTogglePin" style="padding:0 14px;" title="Show or hide the PIN">👁</button>
+        <button type="button" class="btn btn-secondary" id="btnTogglePin" style="padding:0 14px;" title="Show or hide the admin password">👁</button>
       </div>
     </div>
+    <div class="field-row">
+      <div class="field"><label>User Login Name</label><input type="text" id="settingsUserName" placeholder="user"></div>
+      <div class="field">
+        <label>User Password (4 digits)</label>
+        <div style="display:flex;gap:8px;">
+          <input type="password" inputmode="numeric" maxlength="4" id="settingsUserPass" placeholder="1234" style="flex:1;">
+          <button type="button" class="btn btn-secondary" id="btnToggleUserPass" style="padding:0 10px;" title="Show or hide the user password">👁</button>
+        </div>
+      </div>
+    </div>
+    <p class="muted small">The "User" account can only access Dashboard, Bill, and view Reports. Only Admin sees Items and Settings.</p>
     <div class="field">
       <label>Payment QR Code (for Online payments)</label>
       <div class="img-preview" id="settingsQrPreview"></div>
@@ -522,9 +548,11 @@ let editingItemId = null;
 let pendingImageFile = null, pendingLogoFile = null, pendingQrFile = null, qrRemoved = false;
 let reportMode = 'daily';
 let lastReportSnap = null;
+let lastPieChartData = [];
 let reportSalesById = {};
 let settingsLoaded = false;
 let pinUnlocked = sessionStorage.getItem('matrixPinUnlocked') === '1';
+let currentRole = sessionStorage.getItem('matrixRole') || 'admin';
 let lastSale = null;
 let invoiceSaleData = null;
 
@@ -557,26 +585,60 @@ function withTimeout(promise, ms, label){
   ]);
 }
 
-/* ================= PIN LOCK ================= */
+/* ================= PIN LOCK / ROLE LOGIN ================= */
+let selectedRole = 'admin';
+$('roleAdminBtn').onclick = () => {
+  selectedRole = 'admin';
+  $('roleAdminBtn').classList.add('active'); $('roleUserBtn').classList.remove('active');
+  $('loginUsername').classList.add('hidden');
+  $('pinError').classList.add('hidden');
+};
+$('roleUserBtn').onclick = () => {
+  selectedRole = 'user';
+  $('roleUserBtn').classList.add('active'); $('roleAdminBtn').classList.remove('active');
+  $('loginUsername').classList.remove('hidden');
+  $('pinError').classList.add('hidden');
+};
 function tryShowLock(){
-  if(pinUnlocked){ $('pinOverlay').classList.add('hidden'); return; }
+  if(pinUnlocked){ $('pinOverlay').classList.add('hidden'); applyRolePermissions(); return; }
   $('pinOverlay').classList.remove('hidden');
-  if(settingsLoaded){ $('btnUnlock').disabled = false; $('btnUnlock').textContent = 'Login'; $('pinSub').textContent = 'Enter 4-digit PIN to continue'; $('pinSlowHint').classList.add('hidden'); }
+  if(settingsLoaded){ $('btnUnlock').disabled = false; $('btnUnlock').textContent = 'Login'; $('pinSub').textContent = 'Select role and enter password'; $('pinSlowHint').classList.add('hidden'); }
 }
 function attemptUnlock(){
   if(!settingsLoaded) return;
-  const entered = $('pinInput').value.trim();
-  const correct = settings.pin || '1234';
-  if(entered === correct){
+  const enteredPass = $('pinInput').value.trim();
+  let ok = false, role = selectedRole;
+  if(selectedRole === 'admin'){
+    const correctPass = settings.adminPassword || settings.pin || '1234';
+    ok = (enteredPass === correctPass);
+  } else {
+    const enteredUser = $('loginUsername').value.trim();
+    const correctUser = settings.userName || 'user';
+    const correctPass = settings.userPassword || '1234';
+    ok = (enteredUser === correctUser && enteredPass === correctPass);
+  }
+  if(ok){
     pinUnlocked = true;
+    currentRole = role;
     sessionStorage.setItem('matrixPinUnlocked','1');
+    sessionStorage.setItem('matrixRole', role);
     $('pinOverlay').classList.add('hidden');
     $('pinError').classList.add('hidden');
+    applyRolePermissions();
   } else {
     $('pinError').classList.remove('hidden');
     $('pinInput').value = '';
     $('pinInput').focus();
   }
+}
+function applyRolePermissions(){
+  const isAdmin = currentRole === 'admin';
+  const itemsNavBtn = document.querySelector('.navbtn[data-view="items"]');
+  if(itemsNavBtn) itemsNavBtn.classList.toggle('hidden', !isAdmin);
+  $('btnSettings').classList.toggle('hidden', !isAdmin);
+  $('btnQuickAdd').classList.toggle('hidden', !isAdmin);
+  const activeView = document.querySelector('.view.active');
+  switchView(activeView ? activeView.id.replace('view-','') : 'dashboard');
 }
 $('btnUnlock').onclick = attemptUnlock;
 $('pinInput').addEventListener('keydown', e => { if(e.key==='Enter') attemptUnlock(); });
@@ -593,6 +655,10 @@ $('btnLogout').onclick = async () => {
   if(!confirm('Are you sure you want to logout?')) return;
   await clearAppCache();
   pinUnlocked = false;
+  currentRole = 'admin';
+  selectedRole = 'admin';
+  $('roleAdminBtn').classList.add('active'); $('roleUserBtn').classList.remove('active');
+  $('loginUsername').classList.add('hidden'); $('loginUsername').value = '';
   $('pinInput').value = '';
   $('pinError').classList.add('hidden');
   tryShowLock();
@@ -617,7 +683,7 @@ function initListeners(){
   });
   db.collection('meta').doc('settings').onSnapshot(doc=>{
     if(doc.exists){ settings = doc.data(); }
-    else { db.collection('meta').doc('settings').set({lowStockThreshold:5, currency:'₹', qrUrl:'', pin:'1234'}); }
+    else { db.collection('meta').doc('settings').set({lowStockThreshold:5, currency:'₹', qrUrl:'', adminPassword:'1234', userName:'user', userPassword:'1234'}); }
     settingsLoaded = true; tryShowLock();
     renderDashboard(); renderItems(); renderBillList();
   });
@@ -693,6 +759,7 @@ function renderShopHeader(){
 
 /* ================= SETTINGS MODAL ================= */
 $('btnSettings').onclick = () => {
+  if(currentRole !== 'admin'){ toast('Only Admin can access settings'); return; }
   pendingLogoFile=null; pendingQrFile=null; qrRemoved=false;
   $('settingsShopName').value = shopProfile.name || '';
   $('settingsShopAddress').value = shopProfile.address || DEFAULT_ADDRESS;
@@ -700,9 +767,13 @@ $('btnSettings').onclick = () => {
   $('settingsShopEmail').value = shopProfile.email || DEFAULT_EMAIL;
   $('settingsLogoPreview').innerHTML = shopProfile.logoUrl ? `<img src="${shopProfile.logoUrl}">` : '';
   $('settingsLowStock').value = settings.lowStockThreshold ?? 5;
-  $('settingsPin').value = settings.pin || '1234';
+  $('settingsPin').value = settings.adminPassword || settings.pin || '1234';
   $('settingsPin').type = 'password';
   $('btnTogglePin').textContent = '👁';
+  $('settingsUserName').value = settings.userName || 'user';
+  $('settingsUserPass').value = settings.userPassword || '1234';
+  $('settingsUserPass').type = 'password';
+  $('btnToggleUserPass').textContent = '👁';
   $('settingsQrPreview').innerHTML = settings.qrUrl ? `<img src="${settings.qrUrl}">` : '';
   openModal('modal-settings');
 };
@@ -712,9 +783,18 @@ $('btnTogglePin').onclick = () => {
   $('settingsPin').type = showing ? 'password' : 'text';
   $('btnTogglePin').textContent = showing ? '👁' : '🙈';
 };
+$('btnToggleUserPass').onclick = () => {
+  const showing = $('settingsUserPass').type === 'text';
+  $('settingsUserPass').type = showing ? 'password' : 'text';
+  $('btnToggleUserPass').textContent = showing ? '👁' : '🙈';
+};
 $('btnSaveSettings').onclick = async () => {
   const pinVal = $('settingsPin').value.trim();
-  if(!/^\d{4}$/.test(pinVal)){ toast('PIN must be exactly 4 digits'); return; }
+  const userNameVal = $('settingsUserName').value.trim();
+  const userPassVal = $('settingsUserPass').value.trim();
+  if(!/^\d{4}$/.test(pinVal)){ toast('Admin password must be exactly 4 digits'); return; }
+  if(!userNameVal){ toast('Enter a user login name'); return; }
+  if(!/^\d{4}$/.test(userPassVal)){ toast('User password must be exactly 4 digits'); return; }
   const btn = $('btnSaveSettings'); btn.disabled = true; btn.textContent = 'Saving…';
   try{
     let logoUrl = shopProfile.logoUrl || '';
@@ -731,7 +811,10 @@ $('btnSaveSettings').onclick = async () => {
     }), 15000, 'Save');
     await withTimeout(db.collection('meta').doc('settings').set({
       lowStockThreshold: parseInt($('settingsLowStock').value,10) || 0,
-      currency: '₹', qrUrl, pin: pinVal
+      currency: '₹', qrUrl,
+      adminPassword: pinVal,
+      userName: userNameVal,
+      userPassword: userPassVal
     }, {merge:true}), 15000, 'Save');
     toast('Settings saved'); closeModal('modal-settings');
   } catch(err){ console.error(err); toast(err.message || 'Failed to save settings'); }
@@ -740,10 +823,11 @@ $('btnSaveSettings').onclick = async () => {
 
 /* ================= NAV / VIEWS ================= */
 function switchView(view){
+  if(currentRole !== 'admin' && view === 'items'){ view = 'dashboard'; }
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('view-'+view).classList.add('active');
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
-  $('fabAddItem').classList.toggle('hidden', view!=='items');
+  $('fabAddItem').classList.toggle('hidden', view!=='items' || currentRole!=='admin');
 }
 document.querySelectorAll('.navbtn').forEach(b=>b.onclick = ()=>switchView(b.dataset.view));
 $('btnQuickBill').onclick = ()=>switchView('bill');
@@ -782,6 +866,7 @@ $('itemSearchInput').oninput = renderItems;
 $('fabAddItem').onclick = openAddItem;
 
 function openAddItem(){
+  if(currentRole !== 'admin'){ toast('Only Admin can manage items'); return; }
   editingItemId=null; pendingImageFile=null;
   $('itemForm').reset();
   $('itemModalTitle').textContent = 'Add Item';
@@ -790,6 +875,7 @@ function openAddItem(){
   openModal('modal-item');
 }
 function openEditItem(id){
+  if(currentRole !== 'admin'){ toast('Only Admin can manage items'); return; }
   const item = items.find(i=>i.id===id); if(!item) return;
   editingItemId = id; pendingImageFile = null;
   $('itemName').value = item.name || '';
@@ -805,6 +891,7 @@ function openEditItem(id){
 }
 $('itemForm').onsubmit = async (e) => {
   e.preventDefault();
+  if(currentRole !== 'admin'){ toast('Only Admin can manage items'); return; }
   const name = $('itemName').value.trim();
   const category = $('itemCategory').value.trim();
   const subCategory = $('itemSubCategory').value.trim();
@@ -835,6 +922,7 @@ $('itemForm').onsubmit = async (e) => {
   btn.disabled = false; btn.textContent = 'Save Item';
 };
 $('btnDeleteItem').onclick = async () => {
+  if(currentRole !== 'admin'){ toast('Only Admin can manage items'); return; }
   if(!editingItemId) return;
   if(!confirm('Delete this item permanently?')) return;
   try{ await db.collection('items').doc(editingItemId).delete(); toast('Item deleted'); closeModal('modal-item'); }
@@ -1117,6 +1205,7 @@ async function loadReport(){
   const rows=[];
   const otherRows=[];
   let otherTotal=0;
+  const itemTotals = {};
   snap.forEach(doc=>{
     const d = doc.data();
     reportSalesById[doc.id] = d;
@@ -1125,6 +1214,8 @@ async function loadReport(){
     const timeStr = t.toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'});
     (d.items||[]).forEach(i=>{
       revenue += i.mrpRate*i.qty; cost += i.stockRate*i.qty;
+      const key = i.isOther ? 'Other Transactions' : i.name;
+      itemTotals[key] = (itemTotals[key]||0) + i.mrpRate*i.qty;
       if(i.isOther){ otherTotal += i.mrpRate*i.qty; otherRows.push({ time: timeStr, desc: i.name, amount: i.mrpRate*i.qty }); }
       else { qtySum += i.qty; }
     });
@@ -1139,13 +1230,62 @@ async function loadReport(){
     <tr><td>${r.time}</td><td>${r.items}</td><td class="mono">${formatMoney(r.total)}</td><td>${r.mode}</td>
     <td style="white-space:nowrap;">
       <button class="btn btn-secondary" style="padding:4px 8px;font-size:11px;" onclick="openInvoiceFromReport('${r.id}')" title="Generate invoice for this bill">🧾</button>
-      <button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteSale('${r.id}')" title="Delete this bill permanently">🗑</button>
+      ${currentRole==='admin' ? `<button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteSale('${r.id}')" title="Delete this bill permanently">🗑</button>` : ''}
     </td></tr>
   `).join('') : `<tr><td colspan="5" class="muted">No sales in this period</td></tr>`;
   $('otherTransTableBody').innerHTML = otherRows.length ? otherRows.map(r=>`
     <tr><td>${r.time}</td><td>${escapeHtml(r.desc)}</td><td class="mono">${formatMoney(r.amount)}</td></tr>
   `).join('') : `<tr><td colspan="3" class="muted">No other transactions in this period</td></tr>`;
   $('otherTransTotal').textContent = formatMoney(otherTotal);
+
+  $('pieChartSection').classList.toggle('hidden', reportMode !== 'monthly');
+  if(reportMode === 'monthly'){
+    let entries = Object.entries(itemTotals).map(([label,value])=>({label,value})).sort((a,b)=>b.value-a.value);
+    if(entries.length > 8){
+      const top = entries.slice(0,7);
+      const restSum = entries.slice(7).reduce((s,e)=>s+e.value,0);
+      entries = [...top, { label:'Other Items', value: restSum }];
+    }
+    lastPieChartData = entries;
+    $('pieChartContainer').innerHTML = renderPieChart(entries);
+  } else {
+    lastPieChartData = [];
+  }
+}
+const PIE_PALETTE = ['#1F6F4A','#3FA672','#C99A3C','#4A7FB5','#B5574A','#7A5FB5','#5FB5A8','#B5875F','#8FA84A'];
+function renderPieChart(data){
+  const total = data.reduce((s,d)=>s+d.value,0);
+  if(total <= 0){ return '<p class="muted center small">No sales data for this month yet.</p>'; }
+  const cx=100, cy=100, r=90;
+  let cumulative = 0;
+  let paths = '';
+  data.forEach((d,i)=>{
+    const frac = d.value/total;
+    const color = PIE_PALETTE[i % PIE_PALETTE.length];
+    if(frac >= 0.9999){
+      paths += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"></circle>`;
+    } else {
+      const startAngle = cumulative * 2*Math.PI;
+      cumulative += frac;
+      const endAngle = cumulative * 2*Math.PI;
+      const x1 = cx + r*Math.sin(startAngle), y1 = cy - r*Math.cos(startAngle);
+      const x2 = cx + r*Math.sin(endAngle), y2 = cy - r*Math.cos(endAngle);
+      const largeArc = frac > 0.5 ? 1 : 0;
+      paths += `<path d="M${cx},${cy} L${x1.toFixed(2)},${y1.toFixed(2)} A${r},${r} 0 ${largeArc} 1 ${x2.toFixed(2)},${y2.toFixed(2)} Z" fill="${color}"></path>`;
+    }
+  });
+  const svg = `<svg viewBox="0 0 200 200" width="200" height="200">${paths}</svg>`;
+  const legend = data.map((d,i)=>{
+    const pct = ((d.value/total)*100).toFixed(1);
+    const color = PIE_PALETTE[i % PIE_PALETTE.length];
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:12.5px;border-bottom:1px dashed var(--green-200);">
+      <span style="width:11px;height:11px;border-radius:3px;background:${color};flex-shrink:0;"></span>
+      <span style="flex:1;">${escapeHtml(d.label)}</span>
+      <span class="mono muted">${pct}%</span>
+      <span class="mono" style="min-width:74px;text-align:right;">${formatMoney(d.value)}</span>
+    </div>`;
+  }).join('');
+  return `${svg}<div style="width:100%;">${legend}</div>`;
 }
 function openInvoiceFromReport(saleId){
   const d = reportSalesById[saleId];
@@ -1153,6 +1293,7 @@ function openInvoiceFromReport(saleId){
   openInvoiceModal({ id: saleId, items: d.items||[], total: d.total||0, paymentMode: d.paymentMode||'-' });
 }
 async function deleteSale(saleId){
+  if(currentRole !== 'admin'){ toast('Only Admin can delete bills'); return; }
   if(!confirm('Permanently delete this bill? This cannot be undone. Stock quantities for its items will be added back.')) return;
   try{
     const saleDoc = await db.collection('sales').doc(saleId).get();
@@ -1184,6 +1325,23 @@ $('btnDownloadCsv').onclick = () => {
   const a = document.createElement('a');
   const label = reportMode==='daily' ? $('reportDateInput').value : $('reportMonthInput').value;
   a.href = url; a.download = `matrix-report-${reportMode}-${label}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+};
+$('btnDownloadPieCsv').onclick = () => {
+  if(!lastPieChartData.length){ toast('No item-wise data to download for this month'); return; }
+  const total = lastPieChartData.reduce((s,d)=>s+d.value,0);
+  let csv = 'Item,Amount,Percentage\n';
+  lastPieChartData.forEach(d=>{
+    const pct = total>0 ? ((d.value/total)*100).toFixed(1) : '0.0';
+    csv += `"${(d.label||'').replace(/"/g,'""')}",${d.value.toFixed(2)},${pct}%\n`;
+  });
+  csv += `Total,${total.toFixed(2)},100.0%\n`;
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const monthLabel = $('reportMonthInput').value || new Date().toISOString().slice(0,7);
+  a.href = url; a.download = `matrix-itemwise-report-${monthLabel}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 };
