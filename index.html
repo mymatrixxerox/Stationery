@@ -151,6 +151,9 @@ input,select{font-family:inherit;}
 .qty-stepper{display:flex;align-items:center;gap:8px;background:var(--green-100);border-radius:20px;padding:2px 4px;}
 .qty-stepper button{width:24px;height:24px;border-radius:50%;border:none;background:var(--paper);color:var(--green-800);font-weight:700;font-size:15px;line-height:1;}
 .qty-stepper span{min-width:16px;text-align:center;font-family:var(--font-mono);font-size:13px;}
+.qty-input{width:38px;text-align:center;font-family:var(--font-mono);font-size:13px;border:none;background:transparent;color:var(--ink);padding:2px 0;-moz-appearance:textfield;}
+.qty-input::-webkit-outer-spin-button,.qty-input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}
+.qty-input:focus{outline:1.5px solid var(--green-600);border-radius:6px;}
 .cart-amount{font-size:13px;min-width:64px;text-align:right;}
 .cart-total-row{display:flex;justify-content:space-between;align-items:center;padding:12px 0 10px;font-weight:700;}
 .cart-total-row .amt{font-family:var(--font-mono);font-size:19px;color:var(--green-800);}
@@ -305,6 +308,12 @@ body.modal-open{overflow:hidden;}
   </div>
   <button class="fab" id="fabAddItem" title="Add item">＋</button>
 
+  <!-- INWARD STOCK -->
+  <div class="view" id="view-inward">
+    <div class="searchbar">🔎 <input id="inwardSearchInput" placeholder="Search item to add stock…"></div>
+    <div id="inwardItemsList"></div>
+  </div>
+
   <!-- BILL -->
   <div class="view" id="view-bill">
     <div class="searchbar">🔎 <input id="billSearchInput" placeholder="Search items to add…"></div>
@@ -313,7 +322,19 @@ body.modal-open{overflow:hidden;}
     <div class="receipt">
       <div class="receipt-title">Current Bill</div>
       <div id="cartList"></div>
-      <div class="cart-total-row"><span>Total</span><span class="amt mono" id="cartTotalEl">₹0.00</span></div>
+      <div class="cart-row" style="border-bottom:none;">
+        <div class="cart-name">Discount</div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input type="number" id="discountValue" min="0" step="0.01" placeholder="0" style="width:64px;border:1.5px solid var(--green-200);border-radius:8px;padding:5px 6px;font-family:var(--font-mono);font-size:13px;text-align:right;" title="Discount amount or percentage">
+          <button type="button" id="discountTypeToggle" class="chip" style="padding:5px 10px;font-size:12px;" title="Switch between ₹ flat amount and % percentage">₹</button>
+        </div>
+      </div>
+      <div style="border-top:1px dashed var(--green-200);margin-top:2px;padding-top:4px;">
+        <div class="cart-row" style="border-bottom:none;padding:3px 0;"><div class="cart-name muted small">Subtotal</div><div class="mono muted small" id="subtotalAmt">₹0.00</div></div>
+        <div class="cart-row hidden" id="discountSummaryRow" style="border-bottom:none;padding:3px 0;"><div class="cart-name muted small">Discount</div><div class="mono muted small" id="discountAmt">-₹0.00</div></div>
+        <div class="cart-row hidden" id="roundOffRow" style="border-bottom:none;padding:3px 0;"><div class="cart-name muted small">Round Off</div><div class="mono muted small" id="roundOffAmt">₹0.00</div></div>
+      </div>
+      <div class="cart-total-row"><span>Total Payable</span><span class="amt mono" id="cartTotalEl">₹0.00</span></div>
     </div>
     <div class="bill-actions">
       <button class="btn btn-secondary btn-block" id="btnClearCart" title="Remove all items from the current bill">Clear Cart</button>
@@ -325,24 +346,29 @@ body.modal-open{overflow:hidden;}
   <div class="view" id="view-reports">
     <div class="chip-row">
       <button class="chip active" id="chipDaily" title="View today’s report">Daily</button>
-      <button class="chip" id="chipMonthly" title="View this month’s report">Monthly</button>
+      <button class="chip" id="chipMonthly" title="View a custom date range">Monthly</button>
     </div>
     <div class="field">
       <input type="date" id="reportDateInput">
-      <input type="month" id="reportMonthInput" class="hidden">
+    </div>
+    <div class="field-row hidden" id="monthRangeFields">
+      <div class="field"><label>From Date</label><input type="date" id="reportFromDate"></div>
+      <div class="field"><label>To Date</label><input type="date" id="reportToDate"></div>
     </div>
     <div class="report-stats">
       <div class="report-stat"><div class="v" id="reportSoldCount">0</div><div class="l">ITEMS SOLD</div></div>
       <div class="report-stat"><div class="v" id="reportRevenue">₹0</div><div class="l">REVENUE</div></div>
-      <div class="report-stat"><div class="v" id="reportCost">₹0</div><div class="l">COST</div></div>
-      <div class="report-stat"><div class="v" id="reportProfit">₹0</div><div class="l">PROFIT</div></div>
+      <div class="report-stat"><div class="v" id="reportDiscount">₹0</div><div class="l">DISCOUNT GIVEN</div></div>
+      <div class="report-stat admin-only" id="reportCostCard"><div class="v" id="reportCost">₹0</div><div class="l">COST</div></div>
+      <div class="report-stat admin-only" id="reportProfitCard"><div class="v" id="reportProfit">₹0</div><div class="l">PROFIT</div></div>
     </div>
     <button class="btn btn-outline btn-block" id="btnDownloadCsv" title="Download this report as a CSV file">⬇ Download Report (CSV)</button>
+    <button class="btn btn-outline btn-block admin-only" id="btnDownloadStockReport" style="margin-top:8px;" title="Download stock received (inward), item-wise and date-wise, as a CSV file">⬇ Download Stock Report (CSV)</button>
     <div class="section-title">Bills in this period</div>
     <div class="card" style="overflow-x:auto;">
       <table class="report-table">
-        <thead><tr><th>Time</th><th>Items</th><th>Total</th><th>Mode</th><th></th></tr></thead>
-        <tbody id="reportTableBody"><tr><td colspan="5" class="muted">No data</td></tr></tbody>
+        <thead><tr><th>Time</th><th>Items</th><th>Discount</th><th>Total</th><th>Mode</th><th></th></tr></thead>
+        <tbody id="reportTableBody"><tr><td colspan="6" class="muted">No data</td></tr></tbody>
       </table>
     </div>
     <div class="section-title">Other Transactions</div>
@@ -354,7 +380,7 @@ body.modal-open{overflow:hidden;}
       <div style="display:flex;justify-content:space-between;padding-top:10px;font-weight:700;"><span>Total</span><span class="mono" id="otherTransTotal">₹0.00</span></div>
     </div>
     <div id="pieChartSection" class="hidden">
-      <div class="section-title">Item-wise Sales (This Month)</div>
+      <div class="section-title" id="pieChartTitle">Item-wise Sales</div>
       <div class="card">
         <div id="pieChartContainer" style="display:flex;flex-direction:column;align-items:center;gap:14px;"></div>
       </div>
@@ -366,6 +392,7 @@ body.modal-open{overflow:hidden;}
   <div class="bottomnav">
     <button class="navbtn active" data-view="dashboard" title="Dashboard"><span class="navicon">🏠</span>Dashboard</button>
     <button class="navbtn" data-view="items" title="Items"><span class="navicon">📦</span>Items</button>
+    <button class="navbtn" data-view="inward" title="Inward Stock"><span class="navicon">📥</span>Inward</button>
     <button class="navbtn" data-view="bill" title="Bill"><span class="navicon">🧾</span>Bill</button>
     <button class="navbtn" data-view="reports" title="Reports"><span class="navicon">📊</span>Reports</button>
   </div>
@@ -456,6 +483,26 @@ body.modal-open{overflow:hidden;}
       <button type="submit" class="btn btn-primary btn-block" id="btnSaveItem" title="Save this item">Save Item</button>
       <button type="button" class="btn btn-danger btn-block hidden" id="btnDeleteItem" style="margin-top:8px;" title="Permanently delete this item">Delete Item</button>
     </form>
+  </div>
+</div>
+
+<!-- MODAL: Inward Stock -->
+<div class="modal-overlay" id="modal-inward">
+  <div class="modal-box">
+    <div class="modal-head"><h3>Inward Stock</h3><button class="modal-close" data-modal="modal-inward" title="Close">✕</button></div>
+    <div class="field">
+      <label>Item</label>
+      <div class="card" style="padding:10px;">
+        <strong id="inwardItemName"></strong>
+        <div class="muted small" id="inwardItemMeta"></div>
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Current Stock</label><input type="text" id="inwardCurrentStock" disabled></div>
+      <div class="field"><label>Date</label><input type="text" id="inwardDate" disabled></div>
+    </div>
+    <div class="field"><label>Quantity to Add *</label><input type="number" id="inwardQty" min="1" step="1" placeholder="e.g. 50"></div>
+    <button class="btn btn-primary btn-block" id="btnConfirmInward" title="Add this stock to inventory">＋ Add Stock</button>
   </div>
 </div>
 
@@ -636,8 +683,11 @@ function applyRolePermissions(){
   const isAdmin = currentRole === 'admin';
   const itemsNavBtn = document.querySelector('.navbtn[data-view="items"]');
   if(itemsNavBtn) itemsNavBtn.classList.toggle('hidden', !isAdmin);
+  const inwardNavBtn = document.querySelector('.navbtn[data-view="inward"]');
+  if(inwardNavBtn) inwardNavBtn.classList.toggle('hidden', !isAdmin);
   $('btnSettings').classList.toggle('hidden', !isAdmin);
   $('btnQuickAdd').classList.toggle('hidden', !isAdmin);
+  document.querySelectorAll('.admin-only').forEach(el => el.classList.toggle('hidden', !isAdmin));
   const activeView = document.querySelector('.view.active');
   switchView(activeView ? activeView.id.replace('view-','') : 'dashboard');
 }
@@ -686,11 +736,11 @@ function initListeners(){
     if(doc.exists){ settings = doc.data(); }
     else { db.collection('meta').doc('settings').set({lowStockThreshold:5, currency:'₹', qrUrl:'', adminPassword:'1234', userName:'user', userPassword:'1234'}); }
     settingsLoaded = true; tryShowLock();
-    renderDashboard(); renderItems(); renderBillList();
+    renderDashboard(); renderItems(); renderBillList(); renderInwardList();
   });
   db.collection('items').orderBy('name').onSnapshot(snap=>{
     items = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    renderItems(); renderBillList(); renderDashboard(); populateDatalists();
+    renderItems(); renderBillList(); renderInwardList(); renderDashboard(); populateDatalists();
   }, err => { console.error(err); toast('Sync error — check Firestore rules'); });
 }
 
@@ -825,7 +875,7 @@ $('btnSaveSettings').onclick = async () => {
 
 /* ================= NAV / VIEWS ================= */
 function switchView(view){
-  if(currentRole !== 'admin' && view === 'items'){ view = 'dashboard'; }
+  if(currentRole !== 'admin' && (view === 'items' || view === 'inward')){ view = 'dashboard'; }
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $('view-'+view).classList.add('active');
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active', b.dataset.view===view));
@@ -947,6 +997,58 @@ function renderBillList(){
 }
 $('billSearchInput').oninput = renderBillList;
 function addToCartById(id){ const item = items.find(i=>i.id===id); if(item) addToCart(item); }
+
+/* ================= INWARD STOCK ================= */
+let inwardSelectedItem = null;
+function renderInwardList(){
+  const q = ($('inwardSearchInput').value||'').trim().toLowerCase();
+  const filtered = items.filter(i => !q || i.name.toLowerCase().includes(q) || (i.category||'').toLowerCase().includes(q));
+  $('inwardItemsList').innerHTML = filtered.length ? filtered.map(i=>`
+    <div class="bill-item-row" onclick="openInwardModal('${i.id}')" title="Tap to add stock for ${escapeHtml(i.name)}">
+      <div class="item-thumb small">${i.imageUrl?`<img src="${i.imageUrl}">`:iconPlaceholder(i.category)}</div>
+      <div class="bill-item-info">
+        <div class="item-name">${escapeHtml(i.name)}</div>
+        <div class="muted small">Current stock: ${i.stockQty??0}</div>
+      </div>
+    </div>`).join('') : `<p class="muted center">No items found. Add items from the Items tab first.</p>`;
+}
+$('inwardSearchInput').oninput = renderInwardList;
+function openInwardModal(id){
+  if(currentRole !== 'admin'){ toast('Only Admin can inward stock'); return; }
+  const item = items.find(i=>i.id===id); if(!item) return;
+  inwardSelectedItem = item;
+  $('inwardItemName').textContent = item.name;
+  $('inwardItemMeta').textContent = `${item.category||'—'}${item.subCategory?' › '+item.subCategory:''}`;
+  $('inwardCurrentStock').value = `${item.stockQty??0} units`;
+  $('inwardDate').value = new Date().toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'});
+  $('inwardQty').value = '';
+  openModal('modal-inward');
+}
+$('btnConfirmInward').onclick = async () => {
+  if(currentRole !== 'admin'){ toast('Only Admin can inward stock'); return; }
+  if(!inwardSelectedItem){ toast('Select an item first'); return; }
+  const qty = parseInt($('inwardQty').value, 10);
+  if(isNaN(qty) || qty<=0){ toast('Enter a valid quantity'); return; }
+  const btn = $('btnConfirmInward'); btn.disabled = true; btn.textContent = 'Adding…';
+  try{
+    const dateKey = new Date().toISOString().slice(0,10);
+    const batch = db.batch();
+    batch.update(db.collection('items').doc(inwardSelectedItem.id), { stockQty: (inwardSelectedItem.stockQty||0) + qty });
+    batch.set(db.collection('stockInward').doc(), {
+      itemId: inwardSelectedItem.id,
+      itemName: inwardSelectedItem.name,
+      category: inwardSelectedItem.category || '',
+      subCategory: inwardSelectedItem.subCategory || '',
+      qty, dateKey,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    await withTimeout(batch.commit(), 15000, 'Inward stock');
+    toast(`Added ${qty} units to ${inwardSelectedItem.name}`);
+    closeModal('modal-inward');
+  } catch(err){ console.error(err); toast(err.message || 'Failed to add stock'); }
+  btn.disabled = false; btn.textContent = '＋ Add Stock';
+};
+
 function addToCart(item){
   const existing = cart.find(c=>c.itemId===item.id);
   if(existing) existing.qty++;
@@ -970,8 +1072,38 @@ function changeQty(id, delta){
   if(c.qty<=0) cart = cart.filter(x=>x.itemId!==id);
   renderCart();
 }
-function clearCart(){ cart=[]; renderCart(); }
+function setQty(id, value){
+  const c = cart.find(c=>c.itemId===id); if(!c) return;
+  const n = parseInt(value, 10);
+  if(isNaN(n) || n<=0){ cart = cart.filter(x=>x.itemId!==id); }
+  else { c.qty = n; }
+  renderCart();
+}
+let discountType = 'flat';
+let discountValue = 0;
+function clearCart(){
+  cart=[];
+  discountType='flat'; discountValue=0;
+  $('discountValue').value=''; $('discountTypeToggle').textContent='₹';
+  renderCart();
+}
 function cartTotal(){ return cart.reduce((s,c)=>s+c.mrpRate*c.qty,0); }
+function computeBillTotals(){
+  const subtotal = cartTotal();
+  let discountAmt = discountType==='percent' ? subtotal*(discountValue/100) : discountValue;
+  if(isNaN(discountAmt) || discountAmt < 0) discountAmt = 0;
+  if(discountAmt > subtotal) discountAmt = subtotal;
+  const payableRaw = subtotal - discountAmt;
+  const payableRounded = Math.round(payableRaw);
+  const roundOff = +(payableRounded - payableRaw).toFixed(2);
+  return { subtotal, discountAmt, payableRaw, payableRounded, roundOff };
+}
+$('discountValue').oninput = () => { discountValue = parseFloat($('discountValue').value) || 0; renderCart(); };
+$('discountTypeToggle').onclick = () => {
+  discountType = discountType==='flat' ? 'percent' : 'flat';
+  $('discountTypeToggle').textContent = discountType==='flat' ? '₹' : '%';
+  renderCart();
+};
 function renderCart(){
   $('cartList').innerHTML = cart.length ? cart.map(c=> c.isOther ? `
     <div class="cart-row">
@@ -983,12 +1115,18 @@ function renderCart(){
       <div class="cart-name">${escapeHtml(c.name)}</div>
       <div class="qty-stepper">
         <button onclick="changeQty('${c.itemId}',-1)" title="Decrease quantity">−</button>
-        <span>${c.qty}</span>
+        <input type="number" class="qty-input" min="1" value="${c.qty}" onchange="setQty('${c.itemId}', this.value)" onclick="this.select()" title="Tap to type the quantity directly">
         <button onclick="changeQty('${c.itemId}',1)" title="Increase quantity">+</button>
       </div>
       <div class="cart-amount mono">₹${(c.mrpRate*c.qty).toFixed(2)}</div>
     </div>`).join('') : `<p class="muted center small">Cart is empty. Tap an item above to add it.</p>`;
-  $('cartTotalEl').textContent = formatMoney(cartTotal());
+  const t = computeBillTotals();
+  $('subtotalAmt').textContent = formatMoney(t.subtotal);
+  $('discountSummaryRow').classList.toggle('hidden', t.discountAmt <= 0);
+  $('discountAmt').textContent = '-' + formatMoney(t.discountAmt);
+  $('roundOffRow').classList.toggle('hidden', Math.abs(t.roundOff) < 0.005);
+  $('roundOffAmt').textContent = (t.roundOff >= 0 ? '+' : '') + formatMoney(t.roundOff);
+  $('cartTotalEl').textContent = formatMoney(t.payableRounded);
   $('btnPayNow').disabled = cart.length===0;
 }
 $('btnClearCart').onclick = () => { if(cart.length && !confirm('Clear the current bill?')) return; clearCart(); };
@@ -996,7 +1134,7 @@ $('btnClearCart').onclick = () => { if(cart.length && !confirm('Clear the curren
 /* ================= PAY ================= */
 $('btnPayNow').onclick = () => {
   if(cart.length===0) return;
-  $('payTotalAmount').textContent = formatMoney(cartTotal());
+  $('payTotalAmount').textContent = formatMoney(computeBillTotals().payableRounded);
   $('onlineQrSection').classList.add('hidden');
   openModal('modal-pay');
 };
@@ -1013,12 +1151,17 @@ async function recordSale(paymentMode){
   const now = new Date();
   const dateKey = now.toISOString().slice(0,10);
   const monthKey = dateKey.slice(0,7);
-  const total = cartTotal();
+  const t = computeBillTotals();
+  const total = t.payableRounded;
   const itemsSnapshot = cart.map(c=>({ itemId:c.itemId, name:c.name, qty:c.qty, mrpRate:c.mrpRate, stockRate:c.stockRate, isOther: !!c.isOther }));
   try{
     const batch = db.batch();
     const saleRef = db.collection('sales').doc();
-    batch.set(saleRef, { items: itemsSnapshot, total, paymentMode, dateKey, monthKey, createdAt: firebase.firestore.FieldValue.serverTimestamp() });
+    batch.set(saleRef, {
+      items: itemsSnapshot, total, paymentMode, dateKey, monthKey,
+      subtotal: t.subtotal, discountAmt: t.discountAmt, roundOff: t.roundOff,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
     cart.forEach(c=>{
       if(c.isOther) return;
       const currentItem = items.find(i=>i.id===c.itemId);
@@ -1026,7 +1169,7 @@ async function recordSale(paymentMode){
       batch.update(db.collection('items').doc(c.itemId), { stockQty: newQty });
     });
     await batch.commit();
-    lastSale = { id: saleRef.id, items: itemsSnapshot, total, paymentMode };
+    lastSale = { id: saleRef.id, items: itemsSnapshot, total, paymentMode, subtotal: t.subtotal, discountAmt: t.discountAmt, roundOff: t.roundOff };
     showSuccess(total, paymentMode);
     clearCart();
   } catch(err){ console.error(err); toast('Failed to record sale. Check your connection.'); }
@@ -1125,7 +1268,14 @@ async function generateInvoicePdf(sale, invoiceNo, customer){
     doc.setDrawColor(220); doc.line(15, y + rowH, 195, y + rowH);
     y += rowH;
   });
-  y += 6;
+  y += 4;
+  if(sale.discountAmt > 0 || Math.abs(sale.roundOff||0) >= 0.005){
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    doc.text(`Subtotal: ${pdfMoney(sale.subtotal)}`, 140, y); y += 5;
+    if(sale.discountAmt > 0){ doc.text(`Discount: -${pdfMoney(sale.discountAmt)}`, 140, y); y += 5; }
+    if(Math.abs(sale.roundOff||0) >= 0.005){ doc.text(`Round Off: ${sale.roundOff>=0?'+':''}${pdfMoney(sale.roundOff)}`, 140, y); y += 5; }
+    y += 2;
+  }
   doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
   doc.text(`Total: ${pdfMoney(sale.total)}`, 140, y); y += 7;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
@@ -1174,21 +1324,23 @@ function renderDashboard(){
 
 /* ================= REPORTS ================= */
 $('reportDateInput').value = new Date().toISOString().slice(0,10);
-$('reportMonthInput').value = new Date().toISOString().slice(0,7);
+$('reportFromDate').value = new Date().toISOString().slice(0,8) + '01';
+$('reportToDate').value = new Date().toISOString().slice(0,10);
 $('chipDaily').onclick = () => {
   reportMode='daily';
   $('chipDaily').classList.add('active'); $('chipMonthly').classList.remove('active');
-  $('reportDateInput').classList.remove('hidden'); $('reportMonthInput').classList.add('hidden');
+  $('reportDateInput').classList.remove('hidden'); $('monthRangeFields').classList.add('hidden');
   loadReport();
 };
 $('chipMonthly').onclick = () => {
   reportMode='monthly';
   $('chipMonthly').classList.add('active'); $('chipDaily').classList.remove('active');
-  $('reportMonthInput').classList.remove('hidden'); $('reportDateInput').classList.add('hidden');
+  $('monthRangeFields').classList.remove('hidden'); $('reportDateInput').classList.add('hidden');
   loadReport();
 };
 $('reportDateInput').onchange = loadReport;
-$('reportMonthInput').onchange = loadReport;
+$('reportFromDate').onchange = loadReport;
+$('reportToDate').onchange = loadReport;
 
 async function loadReport(){
   let query;
@@ -1196,14 +1348,16 @@ async function loadReport(){
     const key = $('reportDateInput').value || new Date().toISOString().slice(0,10);
     query = db.collection('sales').where('dateKey','==',key);
   } else {
-    const key = $('reportMonthInput').value || new Date().toISOString().slice(0,7);
-    query = db.collection('sales').where('monthKey','==',key);
+    let from = $('reportFromDate').value || (new Date().toISOString().slice(0,8) + '01');
+    let to = $('reportToDate').value || new Date().toISOString().slice(0,10);
+    if(from > to){ [from, to] = [to, from]; $('reportFromDate').value = from; $('reportToDate').value = to; }
+    query = db.collection('sales').where('dateKey','>=',from).where('dateKey','<=',to);
   }
   let snap;
   try{ snap = await query.get(); } catch(err){ console.error(err); toast('Failed to load report'); return; }
   lastReportSnap = snap;
   reportSalesById = {};
-  let soldCount=0, revenue=0, cost=0;
+  let soldCount=0, revenue=0, cost=0, totalDiscount=0;
   const rows=[];
   const otherRows=[];
   let otherTotal=0;
@@ -1215,26 +1369,29 @@ async function loadReport(){
     const t = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate() : new Date();
     const timeStr = t.toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'});
     (d.items||[]).forEach(i=>{
-      revenue += i.mrpRate*i.qty; cost += i.stockRate*i.qty;
+      cost += i.stockRate*i.qty;
       const key = i.isOther ? 'Other Transactions' : i.name;
       itemTotals[key] = (itemTotals[key]||0) + i.mrpRate*i.qty;
       if(i.isOther){ otherTotal += i.mrpRate*i.qty; otherRows.push({ time: timeStr, desc: i.name, amount: i.mrpRate*i.qty }); }
       else { qtySum += i.qty; }
     });
+    revenue += d.total||0;
+    totalDiscount += d.discountAmt||0;
     soldCount += qtySum;
-    rows.push({ id: doc.id, time: timeStr, items: qtySum, total: d.total||0, mode: d.paymentMode||'—' });
+    rows.push({ id: doc.id, time: timeStr, items: qtySum, discountAmt: d.discountAmt||0, total: d.total||0, mode: d.paymentMode||'—' });
   });
   $('reportSoldCount').textContent = soldCount;
   $('reportRevenue').textContent = formatMoney(revenue);
+  $('reportDiscount').textContent = formatMoney(totalDiscount);
   $('reportCost').textContent = formatMoney(cost);
   $('reportProfit').textContent = formatMoney(revenue-cost);
   $('reportTableBody').innerHTML = rows.length ? rows.map(r=>`
-    <tr><td>${r.time}</td><td>${r.items}</td><td class="mono">${formatMoney(r.total)}</td><td>${r.mode}</td>
+    <tr><td>${r.time}</td><td>${r.items}</td><td class="mono">${r.discountAmt>0?'-'+formatMoney(r.discountAmt):'—'}</td><td class="mono">${formatMoney(r.total)}</td><td>${r.mode}</td>
     <td style="white-space:nowrap;">
       <button class="btn btn-secondary" style="padding:4px 8px;font-size:11px;" onclick="openInvoiceFromReport('${r.id}')" title="Generate invoice for this bill">🧾</button>
       ${currentRole==='admin' ? `<button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteSale('${r.id}')" title="Delete this bill permanently">🗑</button>` : ''}
     </td></tr>
-  `).join('') : `<tr><td colspan="5" class="muted">No sales in this period</td></tr>`;
+  `).join('') : `<tr><td colspan="6" class="muted">No sales in this period</td></tr>`;
   $('otherTransTableBody').innerHTML = otherRows.length ? otherRows.map(r=>`
     <tr><td>${r.time}</td><td>${escapeHtml(r.desc)}</td><td class="mono">${formatMoney(r.amount)}</td></tr>
   `).join('') : `<tr><td colspan="3" class="muted">No other transactions in this period</td></tr>`;
@@ -1242,6 +1399,7 @@ async function loadReport(){
 
   $('pieChartSection').classList.toggle('hidden', reportMode !== 'monthly');
   if(reportMode === 'monthly'){
+    $('pieChartTitle').textContent = `Item-wise Sales (${$('reportFromDate').value} to ${$('reportToDate').value})`;
     let entries = Object.entries(itemTotals).map(([label,value])=>({label,value})).sort((a,b)=>b.value-a.value);
     if(entries.length > 8){
       const top = entries.slice(0,7);
@@ -1292,7 +1450,7 @@ function renderPieChart(data){
 function openInvoiceFromReport(saleId){
   const d = reportSalesById[saleId];
   if(!d){ toast('Bill data not found'); return; }
-  openInvoiceModal({ id: saleId, items: d.items||[], total: d.total||0, paymentMode: d.paymentMode||'-' });
+  openInvoiceModal({ id: saleId, items: d.items||[], total: d.total||0, paymentMode: d.paymentMode||'-', subtotal: d.subtotal||d.total||0, discountAmt: d.discountAmt||0, roundOff: d.roundOff||0 });
 }
 async function deleteSale(saleId){
   if(currentRole !== 'admin'){ toast('Only Admin can delete bills'); return; }
@@ -1315,17 +1473,20 @@ async function deleteSale(saleId){
 }
 $('btnDownloadCsv').onclick = () => {
   if(!lastReportSnap || lastReportSnap.empty){ toast('No data to download for this period'); return; }
-  let csv = 'Date,Item,Qty,Stock Rate,MRP Rate,Line Total,Payment Mode\n';
+  const isAdmin = currentRole === 'admin';
+  let csv = isAdmin ? 'Date,Item,Qty,Stock Rate,MRP Rate,Line Total,Bill Discount,Bill Total,Payment Mode\n' : 'Date,Item,Qty,MRP Rate,Line Total,Bill Discount,Bill Total,Payment Mode\n';
   lastReportSnap.forEach(doc=>{
     const d = doc.data();
     (d.items||[]).forEach(i=>{
-      csv += `${d.dateKey},"${(i.name||'').replace(/"/g,'""')}",${i.qty},${i.stockRate},${i.mrpRate},${(i.mrpRate*i.qty).toFixed(2)},${d.paymentMode}\n`;
+      csv += isAdmin
+        ? `${d.dateKey},"${(i.name||'').replace(/"/g,'""')}",${i.qty},${i.stockRate},${i.mrpRate},${(i.mrpRate*i.qty).toFixed(2)},${(d.discountAmt||0).toFixed(2)},${(d.total||0).toFixed(2)},${d.paymentMode}\n`
+        : `${d.dateKey},"${(i.name||'').replace(/"/g,'""')}",${i.qty},${i.mrpRate},${(i.mrpRate*i.qty).toFixed(2)},${(d.discountAmt||0).toFixed(2)},${(d.total||0).toFixed(2)},${d.paymentMode}\n`;
     });
   });
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const label = reportMode==='daily' ? $('reportDateInput').value : $('reportMonthInput').value;
+  const label = reportMode==='daily' ? $('reportDateInput').value : `${$('reportFromDate').value}_to_${$('reportToDate').value}`;
   a.href = url; a.download = `matrix-report-${reportMode}-${label}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
@@ -1342,10 +1503,41 @@ $('btnDownloadPieCsv').onclick = () => {
   const blob = new Blob([csv], {type:'text/csv'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const monthLabel = $('reportMonthInput').value || new Date().toISOString().slice(0,7);
+  const monthLabel = `${$('reportFromDate').value}_to_${$('reportToDate').value}`;
   a.href = url; a.download = `matrix-itemwise-report-${monthLabel}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+};
+$('btnDownloadStockReport').onclick = async () => {
+  if(currentRole !== 'admin'){ toast('Only Admin can download stock reports'); return; }
+  const btn = $('btnDownloadStockReport'); btn.disabled = true; btn.textContent = 'Preparing…';
+  try{
+    let query, label;
+    if(reportMode === 'daily'){
+      const key = $('reportDateInput').value || new Date().toISOString().slice(0,10);
+      query = db.collection('stockInward').where('dateKey','==',key);
+      label = key;
+    } else {
+      let from = $('reportFromDate').value || (new Date().toISOString().slice(0,8) + '01');
+      let to = $('reportToDate').value || new Date().toISOString().slice(0,10);
+      query = db.collection('stockInward').where('dateKey','>=',from).where('dateKey','<=',to);
+      label = `${from}_to_${to}`;
+    }
+    const snap = await withTimeout(query.get(), 15000, 'Stock report');
+    if(snap.empty){ toast('No stock inward entries for this period'); btn.disabled=false; btn.textContent='⬇ Download Stock Report (CSV)'; return; }
+    let csv = 'Date,Item,Category,Sub-category,Qty Inwarded\n';
+    snap.forEach(doc=>{
+      const d = doc.data();
+      csv += `${d.dateKey},"${(d.itemName||'').replace(/"/g,'""')}",${d.category||''},${d.subCategory||''},${d.qty}\n`;
+    });
+    const blob = new Blob([csv], {type:'text/csv'});
+    const url2 = URL.createObjectURL(blob);
+    const a2 = document.createElement('a');
+    a2.href = url2; a2.download = `matrix-stock-report-${label}.csv`;
+    document.body.appendChild(a2); a2.click(); a2.remove();
+    URL.revokeObjectURL(url2);
+  } catch(err){ console.error(err); toast(err.message || 'Failed to download stock report'); }
+  btn.disabled = false; btn.textContent = '⬇ Download Stock Report (CSV)';
 };
 
 /* ================= MODAL CLOSE WIRING ================= */
