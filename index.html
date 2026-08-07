@@ -894,7 +894,7 @@ function renderShopHeader(){
   $('shopLogoImg').style.display = 'block';
   $('shopLogoFallback').style.display = 'none';
   $('pinLogoImg').src = shopProfile.logoUrl || DEFAULT_LOGO_DATA_URL;
-  document.title = `${shopProfile.name || 'My Shop'} — Billing`;
+  document.title = shopProfile.name || 'My Shop';
 }
 
 /* ================= SETTINGS MODAL ================= */
