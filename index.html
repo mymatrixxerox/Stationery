@@ -829,6 +829,7 @@ function initListeners(){
     inwardEntries = snap.docs.map(d=>({id:d.id, ...d.data()}));
     debouncedInwardEntriesRender();
   }, err => console.error(err));
+  startTodaySalesListener();
 }
 
 /* ================= IMAGE HANDLING ================= */
@@ -1466,18 +1467,20 @@ $('btnGenerateInvoice').onclick = async () => {
 
 /* ================= DASHBOARD ================= */
 function renderDashboard(){
-  const todayKey = new Date().toISOString().slice(0,10);
-  db.collection('sales').where('dateKey','==',todayKey).get().then(snap=>{
-    let soldCount=0, revenue=0;
-    snap.forEach(doc=>{ const d=doc.data(); (d.items||[]).forEach(i=>{ if(!i.isOther) soldCount+=i.qty; }); revenue += d.total||0; });
-    $('statSoldToday').textContent = soldCount;
-    $('statRevenueToday').textContent = formatMoney(revenue);
-  }).catch(err=>console.error(err));
   const threshold = settings.lowStockThreshold ?? 5;
   const low = items.filter(i => (i.stockQty??0) < threshold);
   $('lowStockList').innerHTML = low.length ? low.map(i=>`
     <div class="lowstock-row"><span>${escapeHtml(i.name)}</span><span class="badge badge-danger">${i.stockQty??0} left</span></div>
   `).join('') : `<p class="muted">All items are well stocked.</p>`;
+}
+function startTodaySalesListener(){
+  const todayKey = new Date().toISOString().slice(0,10);
+  db.collection('sales').where('dateKey','==',todayKey).onSnapshot(snap=>{
+    let soldCount=0, revenue=0;
+    snap.forEach(doc=>{ const d=doc.data(); (d.items||[]).forEach(i=>{ if(!i.isOther) soldCount+=i.qty; }); revenue += d.total||0; });
+    $('statSoldToday').textContent = soldCount;
+    $('statRevenueToday').textContent = formatMoney(revenue);
+  }, err=>console.error(err));
 }
 
 /* ================= REPORTS ================= */
@@ -1500,7 +1503,9 @@ $('reportDateInput').onchange = loadReport;
 $('reportFromDate').onchange = loadReport;
 $('reportToDate').onchange = loadReport;
 
-async function loadReport(){
+let unsubscribeReportListener = null;
+function loadReport(){
+  if(unsubscribeReportListener){ unsubscribeReportListener(); unsubscribeReportListener = null; }
   let query;
   if(reportMode==='daily'){
     const key = $('reportDateInput').value || new Date().toISOString().slice(0,10);
@@ -1511,8 +1516,7 @@ async function loadReport(){
     if(from > to){ [from, to] = [to, from]; $('reportFromDate').value = from; $('reportToDate').value = to; }
     query = db.collection('sales').where('dateKey','>=',from).where('dateKey','<=',to);
   }
-  let snap;
-  try{ snap = await query.get(); } catch(err){ console.error(err); toast('Failed to load report'); return; }
+  unsubscribeReportListener = query.onSnapshot(snap=>{
   lastReportSnap = snap;
   reportSalesById = {};
   let soldCount=0, revenue=0, cost=0, totalDiscount=0;
@@ -1569,6 +1573,7 @@ async function loadReport(){
   } else {
     lastPieChartData = [];
   }
+  }, err => { console.error(err); toast('Failed to load report'); });
 }
 const PIE_PALETTE = ['#1F6F4A','#3FA672','#C99A3C','#4A7FB5','#B5574A','#7A5FB5','#5FB5A8','#B5875F','#8FA84A'];
 function renderPieChart(data){
