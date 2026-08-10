@@ -348,6 +348,7 @@ body.modal-open{overflow:hidden;}
     <div class="searchbar">🔎 <input id="inwardSearchInput" placeholder="Search item to add stock…"></div>
     <div id="inwardItemsList" class="scroll-list"></div>
     <div class="section-title">Recent Inward Entries</div>
+    <div class="field"><input type="date" id="inwardEntriesDate"></div>
     <div class="card"><div id="inwardEntriesList" class="scroll-list" style="max-height:280px;"><p class="muted small">Loading…</p></div></div>
   </div>
 
@@ -807,7 +808,6 @@ const debouncedSettingsRender = debounce(()=>{
 const debouncedItemsRender = debounce(()=>{
   renderItems(); renderBillList(); renderInwardList(); renderDashboard(); populateDatalists();
 }, 100);
-const debouncedInwardEntriesRender = debounce(renderInwardEntries, 100);
 
 function initListeners(){
   db.collection('meta').doc('shop').onSnapshot(doc=>{
@@ -825,10 +825,7 @@ function initListeners(){
     items = snap.docs.map(d=>({id:d.id, ...d.data()}));
     debouncedItemsRender();
   }, err => { console.error(err); toast('Sync error — check Firestore rules'); });
-  db.collection('stockInward').orderBy('createdAt','desc').limit(20).onSnapshot(snap=>{
-    inwardEntries = snap.docs.map(d=>({id:d.id, ...d.data()}));
-    debouncedInwardEntriesRender();
-  }, err => console.error(err));
+  loadInwardEntriesForDay();
   startTodaySalesListener();
 }
 
@@ -1166,16 +1163,28 @@ $('btnConfirmInward').onclick = async () => {
 
 let inwardEntries = [];
 let inwardDeleteTarget = null;
+let unsubscribeInwardEntries = null;
+$('inwardEntriesDate').value = new Date().toISOString().slice(0,10);
+function loadInwardEntriesForDay(){
+  if(unsubscribeInwardEntries){ unsubscribeInwardEntries(); unsubscribeInwardEntries = null; }
+  const key = $('inwardEntriesDate').value || new Date().toISOString().slice(0,10);
+  unsubscribeInwardEntries = db.collection('stockInward').where('dateKey','==',key).onSnapshot(snap=>{
+    inwardEntries = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    inwardEntries.sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+    renderInwardEntries();
+  }, err => { console.error(err); toast('Failed to load inward entries'); });
+}
+$('inwardEntriesDate').onchange = loadInwardEntriesForDay;
 function renderInwardEntries(){
   const active = inwardEntries.filter(e => !e.deleted);
   $('inwardEntriesList').innerHTML = active.length ? active.map(e=>`
     <div class="lowstock-row">
-      <span>${escapeHtml(e.itemName)} <span class="muted small">(${e.dateKey})</span></span>
+      <span>${escapeHtml(e.itemName)}</span>
       <span style="display:flex;align-items:center;gap:8px;">
         <span class="badge badge-neutral">+${e.qty}</span>
         <button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="openInwardDeleteModal('${e.id}')" title="Delete this stock entry">🗑</button>
       </span>
-    </div>`).join('') : `<p class="muted small">No inward entries yet.</p>`;
+    </div>`).join('') : `<p class="muted small">No inward entries for this day.</p>`;
 }
 function openInwardDeleteModal(id){
   if(currentRole !== 'admin'){ toast('Only Admin can delete stock entries'); return; }
