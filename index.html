@@ -354,6 +354,7 @@ body.modal-open{overflow:hidden;}
 
   <!-- BILL -->
   <div class="view" id="view-bill">
+    <div class="field"><label>Bill Date</label><input type="date" id="billDateInput" title="Defaults to today — change only to back-date this bill"></div>
     <div class="searchbar">🔎 <input id="billSearchInput" placeholder="Search items to add…"></div>
     <button class="btn btn-secondary btn-block" id="btnOtherTransaction" style="margin-bottom:10px;" title="Add a custom transaction with a description and amount">📝 Other Transaction</button>
     <div id="billItemsList" class="scroll-list"></div>
@@ -1249,10 +1250,13 @@ function setQty(id, value){
 }
 let discountType = 'flat';
 let discountValue = 0;
+$('billDateInput').value = new Date().toISOString().slice(0,10);
+$('billDateInput').max = new Date().toISOString().slice(0,10);
 function clearCart(){
   cart=[];
   discountType='flat'; discountValue=0;
   $('discountValue').value=''; $('discountTypeToggle').textContent='₹';
+  $('billDateInput').value = new Date().toISOString().slice(0,10);
   renderCart();
 }
 function cartTotal(){ return cart.reduce((s,c)=>s+c.mrpRate*c.qty,0); }
@@ -1316,8 +1320,7 @@ $('btnConfirmOnlinePaid').onclick = () => { closeModal('modal-pay'); recordSale(
 
 async function recordSale(paymentMode){
   if(cart.length===0) return;
-  const now = new Date();
-  const dateKey = now.toISOString().slice(0,10);
+  const dateKey = $('billDateInput').value || new Date().toISOString().slice(0,10);
   const monthKey = dateKey.slice(0,7);
   const t = computeBillTotals();
   const total = t.payableRounded;
