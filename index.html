@@ -423,9 +423,17 @@ body.modal-open{overflow:hidden;}
       <div style="display:flex;justify-content:space-between;padding-top:10px;font-weight:700;"><span>Total</span><span class="mono" id="otherTransTotal">₹0.00</span></div>
     </div>
     <div id="pieChartSection" class="hidden">
-      <div class="section-title" id="pieChartTitle">Item-wise Sales</div>
+      <div class="section-title" id="pieChartTitle">Item-wise Report</div>
       <div class="card">
         <div id="pieChartContainer" style="display:flex;flex-direction:column;align-items:center;gap:14px;"></div>
+      </div>
+      <div class="card" style="padding:0;margin-top:12px;">
+        <div class="scroll-table-wrap" style="overflow-x:auto;padding:14px;">
+          <table class="report-table">
+            <thead><tr><th>Item</th><th>Qty Sold</th><th>Amount</th><th>Share</th></tr></thead>
+            <tbody id="itemWiseTableBody"><tr><td colspan="4" class="muted">No data</td></tr></tbody>
+          </table>
+        </div>
       </div>
       <button class="btn btn-outline btn-block" id="btnDownloadPieCsv" style="margin-top:10px;" title="Download this item-wise breakdown as a CSV file">⬇ Download Item-wise Report (CSV)</button>
     </div>
@@ -1535,7 +1543,7 @@ function loadReport(){
   const rows=[];
   const otherRows=[];
   let otherTotal=0;
-  const itemTotals = {};
+  const itemStats = {};
   snap.forEach(doc=>{
     const d = doc.data();
     reportSalesById[doc.id] = d;
@@ -1545,7 +1553,9 @@ function loadReport(){
     (d.items||[]).forEach(i=>{
       cost += i.stockRate*i.qty;
       const key = i.isOther ? 'Other Transactions' : i.name;
-      itemTotals[key] = (itemTotals[key]||0) + i.mrpRate*i.qty;
+      if(!itemStats[key]) itemStats[key] = { qty:0, value:0 };
+      itemStats[key].qty += i.qty;
+      itemStats[key].value += i.mrpRate*i.qty;
       if(i.isOther){ otherTotal += i.mrpRate*i.qty; otherRows.push({ time: timeStr, desc: i.name, amount: i.mrpRate*i.qty }); }
       else { qtySum += i.qty; }
     });
@@ -1573,15 +1583,20 @@ function loadReport(){
 
   $('pieChartSection').classList.toggle('hidden', reportMode !== 'monthly');
   if(reportMode === 'monthly'){
-    $('pieChartTitle').textContent = `Item-wise Sales (${$('reportFromDate').value} to ${$('reportToDate').value})`;
-    let entries = Object.entries(itemTotals).map(([label,value])=>({label,value})).sort((a,b)=>b.value-a.value);
-    if(entries.length > 8){
-      const top = entries.slice(0,7);
-      const restSum = entries.slice(7).reduce((s,e)=>s+e.value,0);
-      entries = [...top, { label:'Other Items', value: restSum }];
-    }
+    $('pieChartTitle').textContent = `Item-wise Report (${$('reportFromDate').value} to ${$('reportToDate').value})`;
+    let entries = Object.entries(itemStats).map(([label,s])=>({label, qty:s.qty, value:s.value})).sort((a,b)=>b.value-a.value);
     lastPieChartData = entries;
-    $('pieChartContainer').innerHTML = renderPieChart(entries);
+    const grandTotal = entries.reduce((s,e)=>s+e.value,0);
+    $('itemWiseTableBody').innerHTML = entries.length ? entries.map(e=>`
+      <tr><td>${escapeHtml(e.label)}</td><td>${e.qty}</td><td class="mono">${formatMoney(e.value)}</td><td class="mono">${grandTotal>0?((e.value/grandTotal)*100).toFixed(1):'0.0'}%</td></tr>
+    `).join('') : `<tr><td colspan="4" class="muted">No sales data for this period</td></tr>`;
+    let chartEntries = entries;
+    if(chartEntries.length > 8){
+      const top = chartEntries.slice(0,7);
+      const restSum = chartEntries.slice(7).reduce((s,e)=>s+e.value,0);
+      chartEntries = [...top, { label:'Other Items', value: restSum }];
+    }
+    $('pieChartContainer').innerHTML = renderPieChart(chartEntries);
   } else {
     lastPieChartData = [];
   }
@@ -1669,12 +1684,12 @@ $('btnDownloadCsv').onclick = () => {
 $('btnDownloadPieCsv').onclick = () => {
   if(!lastPieChartData.length){ toast('No item-wise data to download for this month'); return; }
   const total = lastPieChartData.reduce((s,d)=>s+d.value,0);
-  let csv = 'Item,Amount,Percentage\n';
+  let csv = 'Item,Qty Sold,Amount,Percentage\n';
   lastPieChartData.forEach(d=>{
     const pct = total>0 ? ((d.value/total)*100).toFixed(1) : '0.0';
-    csv += `"${(d.label||'').replace(/"/g,'""')}",${d.value.toFixed(2)},${pct}%\n`;
+    csv += `"${(d.label||'').replace(/"/g,'""')}",${d.qty??''},${d.value.toFixed(2)},${pct}%\n`;
   });
-  csv += `Total,${total.toFixed(2)},100.0%\n`;
+  csv += `Total,,${total.toFixed(2)},100.0%\n`;
   const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
