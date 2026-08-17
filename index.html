@@ -437,6 +437,18 @@ body.modal-open{overflow:hidden;}
       </div>
       <button class="btn btn-outline btn-block" id="btnDownloadPieCsv" style="margin-top:10px;" title="Download this item-wise breakdown as a CSV file">⬇ Download Item-wise Report (CSV)</button>
     </div>
+    <div id="priceChangeSection" class="hidden">
+      <div class="section-title" id="priceChangeTitle">Price Change Report</div>
+      <div class="card" style="padding:0;">
+        <div class="scroll-table-wrap" style="overflow-x:auto;padding:14px;">
+          <table class="report-table">
+            <thead><tr><th>Date</th><th>Item</th><th>Stock Rate</th><th>MRP Rate</th></tr></thead>
+            <tbody id="priceChangeTableBody"><tr><td colspan="4" class="muted">No changes</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <button class="btn btn-outline btn-block" id="btnDownloadPriceChangeCsv" style="margin-top:10px;" title="Download price change history as a CSV file">⬇ Download Price Change Report (CSV)</button>
+    </div>
   </div>
 
   <!-- Bottom nav -->
@@ -1083,6 +1095,17 @@ $('itemForm').onsubmit = async (e) => {
     }
     const data = { name, category, subCategory, stockRate, mrpRate, stockQty, imageUrl, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
     if(editingItemId){
+      const prevItem = items.find(i=>i.id===editingItemId);
+      const priceChanged = prevItem && (Number(prevItem.stockRate)!==stockRate || Number(prevItem.mrpRate)!==mrpRate);
+      if(priceChanged){
+        await withTimeout(db.collection('priceChanges').add({
+          itemId: editingItemId, itemName: name,
+          oldStockRate: Number(prevItem.stockRate)||0, newStockRate: stockRate,
+          oldMrpRate: Number(prevItem.mrpRate)||0, newMrpRate: mrpRate,
+          dateKey: new Date().toISOString().slice(0,10),
+          changedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }), 15000, 'Save');
+      }
       await withTimeout(db.collection('items').doc(editingItemId).update(data), 15000, 'Save');
       toast('Item updated');
     } else {
@@ -1600,8 +1623,53 @@ function loadReport(){
   } else {
     lastPieChartData = [];
   }
+
+  const showPriceChanges = reportMode === 'monthly' && currentRole === 'admin';
+  $('priceChangeSection').classList.toggle('hidden', !showPriceChanges);
+  if(showPriceChanges) loadPriceChangeReport();
   }, err => { console.error(err); toast('Failed to load report'); });
 }
+let unsubscribePriceChanges = null;
+let lastPriceChangeSnap = null;
+function loadPriceChangeReport(){
+  if(unsubscribePriceChanges){ unsubscribePriceChanges(); unsubscribePriceChanges = null; }
+  const from = $('reportFromDate').value || (new Date().toISOString().slice(0,8) + '01');
+  const to = $('reportToDate').value || new Date().toISOString().slice(0,10);
+  $('priceChangeTitle').textContent = `Price Change Report (${from} to ${to})`;
+  unsubscribePriceChanges = db.collection('priceChanges').where('dateKey','>=',from).where('dateKey','<=',to).onSnapshot(snap=>{
+    lastPriceChangeSnap = snap;
+    const rows = snap.docs.map(doc=>{
+      const d = doc.data();
+      return { dateKey: d.dateKey, itemName: d.itemName, oldStockRate: d.oldStockRate, newStockRate: d.newStockRate, oldMrpRate: d.oldMrpRate, newMrpRate: d.newMrpRate };
+    }).sort((a,b) => a.dateKey < b.dateKey ? 1 : -1);
+    $('priceChangeTableBody').innerHTML = rows.length ? rows.map(r=>{
+      const stockDiff = r.newStockRate - r.oldStockRate;
+      const mrpDiff = r.newMrpRate - r.oldMrpRate;
+      return `<tr>
+        <td>${r.dateKey}</td>
+        <td>${escapeHtml(r.itemName)}</td>
+        <td class="mono">${formatMoney(r.oldStockRate)} → ${formatMoney(r.newStockRate)} <span class="${stockDiff>=0?'':'muted'}" style="color:${stockDiff>0?'var(--danger)':stockDiff<0?'var(--green-700)':'var(--muted)'};">(${stockDiff>=0?'+':''}${stockDiff.toFixed(2)})</span></td>
+        <td class="mono">${formatMoney(r.oldMrpRate)} → ${formatMoney(r.newMrpRate)} <span style="color:${mrpDiff>0?'var(--green-700)':mrpDiff<0?'var(--danger)':'var(--muted)'};">(${mrpDiff>=0?'+':''}${mrpDiff.toFixed(2)})</span></td>
+      </tr>`;
+    }).join('') : `<tr><td colspan="4" class="muted">No price changes in this period</td></tr>`;
+  }, err => console.error(err));
+}
+$('btnDownloadPriceChangeCsv').onclick = () => {
+  if(currentRole !== 'admin'){ toast('Only Admin can download this report'); return; }
+  if(!lastPriceChangeSnap || lastPriceChangeSnap.empty){ toast('No price changes to download for this period'); return; }
+  let csv = 'Date,Item,Old Stock Rate,New Stock Rate,Old MRP,New MRP\n';
+  lastPriceChangeSnap.forEach(doc=>{
+    const d = doc.data();
+    csv += `${d.dateKey},"${(d.itemName||'').replace(/"/g,'""')}",${d.oldStockRate},${d.newStockRate},${d.oldMrpRate},${d.newMrpRate}\n`;
+  });
+  const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const label = `${$('reportFromDate').value}_to_${$('reportToDate').value}`;
+  a.href = url; a.download = `matrix-price-change-report-${label}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+};
 const PIE_PALETTE = ['#1F6F4A','#3FA672','#C99A3C','#4A7FB5','#B5574A','#7A5FB5','#5FB5A8','#B5875F','#8FA84A'];
 function renderPieChart(data){
   const total = data.reduce((s,d)=>s+d.value,0);
