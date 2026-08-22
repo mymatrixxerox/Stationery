@@ -401,8 +401,18 @@ body.modal-open{overflow:hidden;}
       <div class="report-stat admin-only" id="reportCostCard"><div class="v" id="reportCost">₹0</div><div class="l">COST</div></div>
       <div class="report-stat admin-only" id="reportProfitCard"><div class="v" id="reportProfit">₹0</div><div class="l">PROFIT</div></div>
     </div>
-    <button class="btn btn-outline btn-block" id="btnDownloadCsv" title="Download this report as a CSV file">⬇ Download Report (CSV)</button>
-    <button class="btn btn-outline btn-block admin-only" id="btnDownloadStockReport" style="margin-top:8px;" title="Download stock received (inward), item-wise and date-wise, as a CSV file">⬇ Download Stock Report (CSV)</button>
+    <button class="btn btn-outline btn-block" id="btnDownloadCsv" title="Download this report as a CSV file">⬇ Download Sales Report (CSV)</button>
+    <button class="btn btn-outline btn-block admin-only" id="btnDownloadStockReport" style="margin-top:8px;" title="Download stock received (inward), item-wise and date-wise, as a CSV file">⬇ Download Inward Stock Report (CSV)</button>
+    <div class="section-title">Low Stock Report</div>
+    <div class="card" style="padding:0;">
+      <div class="scroll-table-wrap" style="overflow-x:auto;padding:14px;">
+        <table class="report-table">
+          <thead><tr><th>Item</th><th>Category</th><th>Current Stock</th></tr></thead>
+          <tbody id="lowStockReportTableBody"><tr><td colspan="3" class="muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <button class="btn btn-outline btn-block" id="btnDownloadLowStockCsv" style="margin-top:8px;" title="Download current low stock items as a CSV file">⬇ Download Low Stock Report (CSV)</button>
     <div class="section-title">Bills in this period</div>
     <div class="card" style="padding:0;">
       <div class="scroll-table-wrap" style="overflow-x:auto;padding:14px;">
@@ -1515,7 +1525,28 @@ function renderDashboard(){
   $('lowStockList').innerHTML = low.length ? low.map(i=>`
     <div class="lowstock-row"><span>${escapeHtml(i.name)}</span><span class="badge badge-danger">${i.stockQty??0} left</span></div>
   `).join('') : `<p class="muted">All items are well stocked.</p>`;
+  renderLowStockReport(low);
 }
+let lastLowStockData = [];
+function renderLowStockReport(low){
+  lastLowStockData = low;
+  $('lowStockReportTableBody').innerHTML = low.length ? low.map(i=>`
+    <tr><td>${escapeHtml(i.name)}</td><td>${escapeHtml(i.category||'—')}${i.subCategory?' › '+escapeHtml(i.subCategory):''}</td><td class="mono">${i.stockQty??0}</td></tr>
+  `).join('') : `<tr><td colspan="3" class="muted">All items are well stocked.</td></tr>`;
+}
+$('btnDownloadLowStockCsv').onclick = () => {
+  if(!lastLowStockData.length){ toast('No low stock items to download'); return; }
+  let csv = 'Item,Category,Sub-category,Current Stock\n';
+  lastLowStockData.forEach(i=>{
+    csv += `"${(i.name||'').replace(/"/g,'""')}",${i.category||''},${i.subCategory||''},${i.stockQty??0}\n`;
+  });
+  const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `matrix-low-stock-report-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+};
 function startTodaySalesListener(){
   const todayKey = new Date().toISOString().slice(0,10);
   db.collection('sales').where('dateKey','==',todayKey).onSnapshot(snap=>{
@@ -1783,7 +1814,7 @@ $('btnDownloadStockReport').onclick = async () => {
     }
     const snap = await withTimeout(query.get(), 15000, 'Stock report');
     const activeDocs = snap.docs.filter(doc => !doc.data().deleted);
-    if(activeDocs.length === 0){ toast('No stock inward entries for this period'); btn.disabled=false; btn.textContent='⬇ Download Stock Report (CSV)'; return; }
+    if(activeDocs.length === 0){ toast('No stock inward entries for this period'); btn.disabled=false; btn.textContent='⬇ Download Inward Stock Report (CSV)'; return; }
     let csv = 'Date,Item,Category,Sub-category,Qty Inwarded\n';
     activeDocs.forEach(doc=>{
       const d = doc.data();
@@ -1796,7 +1827,7 @@ $('btnDownloadStockReport').onclick = async () => {
     document.body.appendChild(a2); a2.click(); a2.remove();
     URL.revokeObjectURL(url2);
   } catch(err){ console.error(err); toast(err.message || 'Failed to download stock report'); }
-  btn.disabled = false; btn.textContent = '⬇ Download Stock Report (CSV)';
+  btn.disabled = false; btn.textContent = '⬇ Download Inward Stock Report (CSV)';
 };
 
 /* ================= MODAL CLOSE WIRING ================= */
