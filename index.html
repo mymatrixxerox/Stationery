@@ -1835,12 +1835,7 @@ document.querySelectorAll('.modal-close').forEach(b => b.onclick = () => {
   if(b.dataset.modal === 'modal-settings') document.documentElement.setAttribute('data-theme', settings.theme || 'green');
   closeModal(b.dataset.modal);
 });
-document.querySelectorAll('.modal-overlay').forEach(ov => ov.onclick = (e) => {
-  if(e.target===ov){
-    if(ov.id === 'modal-settings') document.documentElement.setAttribute('data-theme', settings.theme || 'green');
-    closeModal(ov.id);
-  }
-});
+/* Modals intentionally do NOT close on outside/backdrop click — only via the ✕ icon or an explicit button. */
 
 /* ================= LEAVE-SITE CONFIRMATION ================= */
 /* Browsers control the exact wording of this dialog and won't let us customize it —
