@@ -459,6 +459,25 @@ body.modal-open{overflow:hidden;}
       </div>
       <button class="btn btn-outline btn-block" id="btnDownloadPriceChangeCsv" style="margin-top:10px;" title="Download price change history as a CSV file">⬇ Download Price Change Report (CSV)</button>
     </div>
+    <div id="paymentWiseSection" class="hidden">
+      <div class="section-title" id="paymentWiseTitle">Payment-wise Report</div>
+      <div class="card" style="padding:0;">
+        <div class="scroll-table-wrap" style="overflow-x:auto;padding:14px;">
+          <table class="report-table">
+            <thead><tr><th>Payment Mode</th><th>No. of Bills</th><th>Amount</th><th>Share</th></tr></thead>
+            <tbody id="paymentWiseTableBody"><tr><td colspan="4" class="muted">No data</td></tr></tbody>
+          </table>
+        </div>
+        <div style="padding:0 14px 14px;border-top:1px dashed var(--green-200);margin-top:2px;">
+          <div class="cart-row" style="border-bottom:none;padding:8px 0 2px;"><div class="cart-name">Cash Payments</div><div class="mono" id="paymentWiseCashCount">0 bills</div></div>
+          <div class="cart-row" style="border-bottom:none;padding:2px 0 6px;"><div class="cart-name">Online Payments</div><div class="mono" id="paymentWiseOnlineCount">0 bills</div></div>
+        </div>
+      </div>
+      <div class="bill-actions" style="margin-top:10px;">
+        <button class="btn btn-outline btn-block" id="btnDownloadPaymentWiseCsv" title="Download payment-wise breakdown as a CSV file">⬇ CSV</button>
+        <button class="btn btn-outline btn-block" id="btnDownloadPaymentWisePdf" title="Download payment-wise breakdown as a PDF file">⬇ PDF</button>
+      </div>
+    </div>
   </div>
 
   <!-- Bottom nav -->
@@ -1598,6 +1617,7 @@ function loadReport(){
   const otherRows=[];
   let otherTotal=0;
   const itemStats = {};
+  const paymentTotals = {};
   snap.forEach(doc=>{
     const d = doc.data();
     reportSalesById[doc.id] = d;
@@ -1616,6 +1636,10 @@ function loadReport(){
     revenue += d.total||0;
     totalDiscount += d.discountAmt||0;
     soldCount += qtySum;
+    const modeKey = d.paymentMode || 'Unknown';
+    if(!paymentTotals[modeKey]) paymentTotals[modeKey] = { count:0, amount:0 };
+    paymentTotals[modeKey].count += 1;
+    paymentTotals[modeKey].amount += d.total||0;
     rows.push({ id: doc.id, time: timeStr, items: qtySum, discountAmt: d.discountAmt||0, total: d.total||0, mode: d.paymentMode||'—' });
   });
   $('reportSoldCount').textContent = soldCount;
@@ -1658,10 +1682,31 @@ function loadReport(){
   const showPriceChanges = reportMode === 'monthly' && currentRole === 'admin';
   $('priceChangeSection').classList.toggle('hidden', !showPriceChanges);
   if(showPriceChanges) loadPriceChangeReport();
+
+  const showPaymentWise = reportMode === 'monthly' && currentRole === 'admin';
+  $('paymentWiseSection').classList.toggle('hidden', !showPaymentWise);
+  if(showPaymentWise){
+    $('paymentWiseTitle').textContent = `Payment-wise Report (${$('reportFromDate').value} to ${$('reportToDate').value})`;
+    const modeEntries = Object.entries(paymentTotals).sort((a,b)=>b[1].amount-a[1].amount);
+    const grandTotalAmt = modeEntries.reduce((s,[,v])=>s+v.amount,0);
+    lastPaymentWiseData = modeEntries.map(([mode,v])=>({ mode, count:v.count, amount:v.amount }));
+    $('paymentWiseTableBody').innerHTML = modeEntries.length ? modeEntries.map(([mode,v])=>`
+      <tr><td>${escapeHtml(mode)}</td><td>${v.count}</td><td class="mono">${formatMoney(v.amount)}</td><td class="mono">${grandTotalAmt>0?((v.amount/grandTotalAmt)*100).toFixed(1):'0.0'}%</td></tr>
+    `).join('') : `<tr><td colspan="4" class="muted">No sales in this period</td></tr>`;
+    $('paymentWiseCashCount').textContent = `${paymentTotals['Cash']?.count || 0} bills`;
+    $('paymentWiseOnlineCount').textContent = `${paymentTotals['Online']?.count || 0} bills`;
+    lastPaymentWiseCashCount = paymentTotals['Cash']?.count || 0;
+    lastPaymentWiseOnlineCount = paymentTotals['Online']?.count || 0;
+  } else {
+    lastPaymentWiseData = [];
+  }
   }, err => { console.error(err); toast('Failed to load report'); });
 }
 let unsubscribePriceChanges = null;
 let lastPriceChangeSnap = null;
+let lastPaymentWiseData = [];
+let lastPaymentWiseCashCount = 0;
+let lastPaymentWiseOnlineCount = 0;
 function loadPriceChangeReport(){
   if(unsubscribePriceChanges){ unsubscribePriceChanges(); unsubscribePriceChanges = null; }
   const from = $('reportFromDate').value || (new Date().toISOString().slice(0,8) + '01');
@@ -1700,6 +1745,93 @@ $('btnDownloadPriceChangeCsv').onclick = () => {
   a.href = url; a.download = `matrix-price-change-report-${label}.csv`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+};
+$('btnDownloadPaymentWiseCsv').onclick = () => {
+  if(currentRole !== 'admin'){ toast('Only Admin can download this report'); return; }
+  if(!lastPaymentWiseData.length){ toast('No data to download for this period'); return; }
+  const total = lastPaymentWiseData.reduce((s,d)=>s+d.amount,0);
+  let csv = 'Payment Mode,No. of Bills,Amount,Percentage\n';
+  lastPaymentWiseData.forEach(d=>{
+    const pct = total>0 ? ((d.amount/total)*100).toFixed(1) : '0.0';
+    csv += `"${(d.mode||'').replace(/"/g,'""')}",${d.count},${d.amount.toFixed(2)},${pct}%\n`;
+  });
+  csv += `Total,,${total.toFixed(2)},100.0%\n`;
+  const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8'});
+  const url2 = URL.createObjectURL(blob);
+  const a2 = document.createElement('a');
+  const label2 = `${$('reportFromDate').value}_to_${$('reportToDate').value}`;
+  a2.href = url2; a2.download = `matrix-payment-wise-report-${label2}.csv`;
+  document.body.appendChild(a2); a2.click(); a2.remove();
+  URL.revokeObjectURL(url2);
+};
+$('btnDownloadPaymentWisePdf').onclick = async () => {
+  if(currentRole !== 'admin'){ toast('Only Admin can download this report'); return; }
+  if(!lastPaymentWiseData.length){ toast('No data to download for this period'); return; }
+  const btn = $('btnDownloadPaymentWisePdf'); btn.disabled = true; btn.textContent = 'Generating…';
+  try{
+    if(!window.jspdf) throw new Error('PDF library failed to load. Check your internet and try again.');
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit:'mm', format:'a4' });
+    const address = shopProfile.address || DEFAULT_ADDRESS;
+    const phone = shopProfile.phone || DEFAULT_PHONE;
+    const email = shopProfile.email || DEFAULT_EMAIL;
+    const from = $('reportFromDate').value; const to = $('reportToDate').value;
+
+    let textX = 15, y = 18;
+    try{
+      const logoData = shopProfile.logoUrl ? await urlToDataURL(shopProfile.logoUrl) : DEFAULT_LOGO_DATA_URL;
+      doc.addImage(logoData, 'JPEG', 15, 12, 22, 22);
+      textX = 42;
+    } catch(e){ console.warn('Logo embed failed, continuing without it', e); }
+    doc.setFont('helvetica','bold'); doc.setFontSize(15);
+    doc.text('Matrix Stationery & Xerox', textX, y);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9);
+    y += 6;
+    const addrLines = doc.splitTextToSize(address, 150);
+    doc.text(addrLines, textX, y);
+    y += addrLines.length*4.2;
+    doc.text(`Cell: ${phone}   Email: ${email}`, textX, y);
+
+    y = Math.max(y+10, 42);
+    doc.setDrawColor(180); doc.line(15, y, 195, y); y += 8;
+    doc.setFont('helvetica','bold'); doc.setFontSize(13);
+    doc.text('Payment-wise Report', 15, y);
+    doc.setFont('helvetica','normal'); doc.setFontSize(10);
+    doc.text(`Period: ${from} to ${to}`, 140, y);
+    y += 10;
+
+    doc.setFillColor(18,53,36); doc.rect(15,y,180,8,'F');
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+    doc.text('Payment Mode', 18, y+5.5);
+    doc.text('No. of Bills', 100, y+5.5);
+    doc.text('Amount', 135, y+5.5);
+    doc.text('Share', 172, y+5.5);
+    y += 8;
+    doc.setTextColor(0); doc.setFont('helvetica','normal'); doc.setFontSize(10);
+    const total = lastPaymentWiseData.reduce((s,d)=>s+d.amount,0);
+    lastPaymentWiseData.forEach(d=>{
+      const pct = total>0 ? ((d.amount/total)*100).toFixed(1) : '0.0';
+      doc.text(String(d.mode), 18, y+5.5);
+      doc.text(String(d.count), 105, y+5.5);
+      doc.text(pdfMoney(d.amount), 135, y+5.5);
+      doc.text(`${pct}%`, 172, y+5.5);
+      doc.setDrawColor(220); doc.line(15,y+8,195,y+8);
+      y += 8;
+    });
+    y += 4;
+    doc.setFont('helvetica','bold');
+    doc.text(`Total: ${pdfMoney(total)}`, 135, y); y += 10;
+
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5);
+    doc.text(`Cash Payments: ${lastPaymentWiseCashCount} bills`, 15, y); y += 6;
+    doc.text(`Online Payments: ${lastPaymentWiseOnlineCount} bills`, 15, y); y += 12;
+
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text('This is a computer generated report.', 15, y);
+
+    doc.save(`matrix-payment-wise-report-${from}_to_${to}.pdf`);
+  } catch(err){ console.error(err); toast(err.message || 'Failed to generate PDF'); }
+  btn.disabled = false; btn.textContent = '⬇ PDF';
 };
 const PIE_PALETTE = ['#1F6F4A','#3FA672','#C99A3C','#4A7FB5','#B5574A','#7A5FB5','#5FB5A8','#B5875F','#8FA84A'];
 function renderPieChart(data){
