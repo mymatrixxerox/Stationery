@@ -417,8 +417,8 @@ body.modal-open{overflow:hidden;}
     <div class="card" style="padding:0;">
       <div class="scroll-table-wrap" style="overflow-x:auto;padding:14px;">
         <table class="report-table">
-          <thead><tr><th>Time</th><th>Items</th><th>Discount</th><th>Total</th><th>Mode</th><th></th></tr></thead>
-          <tbody id="reportTableBody"><tr><td colspan="6" class="muted">No data</td></tr></tbody>
+          <thead><tr><th>Time</th><th>Items</th><th>Discount</th><th>Total</th><th>Mode</th><th>Status</th><th></th></tr></thead>
+          <tbody id="reportTableBody"><tr><td colspan="7" class="muted">No data</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -642,12 +642,25 @@ body.modal-open{overflow:hidden;}
       <button class="btn btn-secondary" id="btnPayCash" title="Mark this bill as paid by cash"><span class="em">💵</span>Cash</button>
       <button class="btn btn-secondary" id="btnPayOnline" title="Show QR code for online payment"><span class="em">📱</span>Online</button>
     </div>
+    <button class="btn btn-secondary btn-block" id="btnPayPartial" style="margin-top:8px;" title="Collect part of the amount now, settle the rest later"><span class="em">🔖</span> Partial Pay</button>
     <div id="onlineQrSection" class="hidden">
       <div class="qr-box">
         <img id="qrImage" class="hidden" alt="Payment QR">
         <p id="noQrMsg" class="muted small hidden">No QR uploaded yet. Ask the shop owner to add one from Settings ⚙️.</p>
       </div>
       <button class="btn btn-primary btn-block" id="btnConfirmOnlinePaid" style="margin-top:10px;" title="Confirm that online payment was received">I've Received the Payment</button>
+    </div>
+    <div id="partialPaySection" class="hidden" style="margin-top:10px;">
+      <div class="field"><label>Amount Paid Now (₹) *</label><input type="number" id="partialPaidAmount" min="0.01" step="0.01" placeholder="e.g. 200"></div>
+      <div class="field">
+        <label>Mode of Amount Paid Now</label>
+        <div class="chip-row">
+          <button type="button" class="chip active" id="partialModeCash">💵 Cash</button>
+          <button type="button" class="chip" id="partialModeOnline">📱 Online</button>
+        </div>
+      </div>
+      <div class="cart-row" style="border-bottom:none;"><div class="cart-name">Pending Balance</div><div class="mono" id="partialPendingAmt">₹0.00</div></div>
+      <button class="btn btn-primary btn-block" id="btnConfirmPartialPay" style="margin-top:8px;" title="Record this partial payment">Confirm Partial Payment</button>
     </div>
   </div>
 </div>
@@ -664,6 +677,24 @@ body.modal-open{overflow:hidden;}
     </div>
     <button class="btn btn-outline btn-block" id="btnInvoiceFromSuccess" style="margin-top:16px;" title="Generate a PDF invoice for this bill">🧾 Generate Invoice (PDF)</button>
     <button class="btn btn-primary btn-block" id="btnNewBill" style="margin-top:8px;" title="Start a new bill">Start New Bill</button>
+  </div>
+</div>
+
+<!-- MODAL: Settle Pending Payment -->
+<div class="modal-overlay" id="modal-settle">
+  <div class="modal-box">
+    <div class="modal-head"><h3>Settle Payment</h3><button class="modal-close" data-modal="modal-settle" title="Close">✕</button></div>
+    <div class="pay-total">
+      Pending Balance<br><span class="amt" id="settlePendingAmt">₹0.00</span>
+    </div>
+    <div class="field">
+      <label>Mode of Balance Payment</label>
+      <div class="chip-row">
+        <button type="button" class="chip active" id="settleModeCash">💵 Cash</button>
+        <button type="button" class="chip" id="settleModeOnline">📱 Online</button>
+      </div>
+    </div>
+    <button class="btn btn-primary btn-block" id="btnConfirmSettle" title="Mark this bill as fully paid">Mark as Fully Paid</button>
   </div>
 </div>
 
@@ -1364,26 +1395,58 @@ function renderCart(){
 $('btnClearCart').onclick = () => { if(cart.length && !confirm('Clear the current bill?')) return; clearCart(); };
 
 /* ================= PAY ================= */
+let partialMode = 'Cash';
 $('btnPayNow').onclick = () => {
   if(cart.length===0) return;
   $('payTotalAmount').textContent = formatMoney(computeBillTotals().payableRounded);
   $('onlineQrSection').classList.add('hidden');
+  $('partialPaySection').classList.add('hidden');
+  $('partialPaidAmount').value = '';
+  $('partialPendingAmt').textContent = formatMoney(computeBillTotals().payableRounded);
+  partialMode = 'Cash';
+  $('partialModeCash').classList.add('active'); $('partialModeOnline').classList.remove('active');
   openModal('modal-pay');
 };
 $('btnPayCash').onclick = () => { closeModal('modal-pay'); recordSale('Cash'); };
 $('btnPayOnline').onclick = () => {
   if(settings.qrUrl){ $('qrImage').src = settings.qrUrl; $('qrImage').classList.remove('hidden'); $('noQrMsg').classList.add('hidden'); }
   else { $('qrImage').classList.add('hidden'); $('noQrMsg').classList.remove('hidden'); }
+  $('partialPaySection').classList.add('hidden');
   $('onlineQrSection').classList.remove('hidden');
 };
 $('btnConfirmOnlinePaid').onclick = () => { closeModal('modal-pay'); recordSale('Online'); };
 
-async function recordSale(paymentMode){
+$('btnPayPartial').onclick = () => {
+  $('onlineQrSection').classList.add('hidden');
+  $('partialPaySection').classList.remove('hidden');
+  $('partialPaidAmount').focus();
+};
+$('partialModeCash').onclick = () => { partialMode='Cash'; $('partialModeCash').classList.add('active'); $('partialModeOnline').classList.remove('active'); };
+$('partialModeOnline').onclick = () => { partialMode='Online'; $('partialModeOnline').classList.add('active'); $('partialModeCash').classList.remove('active'); };
+$('partialPaidAmount').oninput = () => {
+  const total = computeBillTotals().payableRounded;
+  const paid = parseFloat($('partialPaidAmount').value) || 0;
+  const pending = Math.max(0, total - paid);
+  $('partialPendingAmt').textContent = formatMoney(pending);
+};
+$('btnConfirmPartialPay').onclick = () => {
+  const total = computeBillTotals().payableRounded;
+  const paid = parseFloat($('partialPaidAmount').value);
+  if(isNaN(paid) || paid <= 0){ toast('Enter a valid amount paid'); return; }
+  if(paid >= total){ toast('This equals or exceeds the total — use Cash or Online instead of Partial Pay'); return; }
+  closeModal('modal-pay');
+  recordSale(partialMode, { paidAmount: paid, pendingAmount: +(total-paid).toFixed(2) });
+};
+
+async function recordSale(paymentMode, partialInfo){
   if(cart.length===0) return;
   const dateKey = $('billDateInput').value || new Date().toISOString().slice(0,10);
   const monthKey = dateKey.slice(0,7);
   const t = computeBillTotals();
   const total = t.payableRounded;
+  const isPartial = !!partialInfo;
+  const paidAmount = isPartial ? partialInfo.paidAmount : total;
+  const pendingAmount = isPartial ? partialInfo.pendingAmount : 0;
   const itemsSnapshot = cart.map(c=>({ itemId:c.itemId, name:c.name, qty:c.qty, mrpRate:c.mrpRate, stockRate:c.stockRate, isOther: !!c.isOther }));
   try{
     const batch = db.batch();
@@ -1391,6 +1454,7 @@ async function recordSale(paymentMode){
     batch.set(saleRef, {
       items: itemsSnapshot, total, paymentMode, dateKey, monthKey,
       subtotal: t.subtotal, discountAmt: t.discountAmt, roundOff: t.roundOff,
+      paymentStatus: isPartial ? 'partial' : 'paid', paidAmount, pendingAmount,
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
     cart.forEach(c=>{
@@ -1400,14 +1464,18 @@ async function recordSale(paymentMode){
       batch.update(db.collection('items').doc(c.itemId), { stockQty: newQty });
     });
     await batch.commit();
-    lastSale = { id: saleRef.id, items: itemsSnapshot, total, paymentMode, subtotal: t.subtotal, discountAmt: t.discountAmt, roundOff: t.roundOff };
-    showSuccess(total, paymentMode);
+    lastSale = { id: saleRef.id, items: itemsSnapshot, total, paymentMode, subtotal: t.subtotal, discountAmt: t.discountAmt, roundOff: t.roundOff, paymentStatus: isPartial?'partial':'paid', paidAmount, pendingAmount };
+    showSuccess(total, paymentMode, isPartial ? { paidAmount, pendingAmount } : null);
     clearCart();
   } catch(err){ console.error(err); toast('Failed to record sale. Check your connection.'); }
 }
-function showSuccess(total, mode){
+function showSuccess(total, mode, partial){
   $('successAmount').textContent = formatMoney(total);
-  $('successMode').textContent = 'via ' + mode;
+  if(partial){
+    $('successMode').textContent = `Paid ₹${partial.paidAmount.toFixed(2)} via ${mode} — Pending: ${formatMoney(partial.pendingAmount)}`;
+  } else {
+    $('successMode').textContent = 'via ' + mode;
+  }
   openModal('modal-success');
 }
 $('btnNewBill').onclick = () => { closeModal('modal-success'); switchView('bill'); };
@@ -1510,8 +1578,14 @@ async function generateInvoicePdf(sale, invoiceNo, customer){
   doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
   doc.text(`Total: ${pdfMoney(sale.total)}`, 140, y); y += 7;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
-  doc.text(`Payment Mode: ${sale.paymentMode || '-'}`, 15, y);
-  y += 14;
+  doc.text(`Payment Mode: ${sale.paymentMode || '-'}`, 15, y); y += 6;
+  if(sale.paymentStatus === 'partial'){
+    doc.setTextColor(180,60,50);
+    doc.text(`Paid: ${pdfMoney(sale.paidAmount)}   Pending: ${pdfMoney(sale.pendingAmount)}`, 15, y);
+    doc.setTextColor(0);
+    y += 6;
+  }
+  y += 8;
   doc.setFontSize(9); doc.setTextColor(120);
   doc.text('Thank you for your business!', 15, y);
   y += 6;
@@ -1640,7 +1714,7 @@ function loadReport(){
     if(!paymentTotals[modeKey]) paymentTotals[modeKey] = { count:0, amount:0 };
     paymentTotals[modeKey].count += 1;
     paymentTotals[modeKey].amount += d.total||0;
-    rows.push({ id: doc.id, time: timeStr, items: qtySum, discountAmt: d.discountAmt||0, total: d.total||0, mode: d.paymentMode||'—' });
+    rows.push({ id: doc.id, time: timeStr, items: qtySum, discountAmt: d.discountAmt||0, total: d.total||0, mode: d.paymentMode||'—', paymentStatus: d.paymentStatus||'paid', pendingAmount: d.pendingAmount||0 });
   });
   $('reportSoldCount').textContent = soldCount;
   $('reportRevenue').textContent = formatMoney(revenue);
@@ -1648,12 +1722,14 @@ function loadReport(){
   $('reportCost').textContent = formatMoney(cost);
   $('reportProfit').textContent = formatMoney(revenue-cost);
   $('reportTableBody').innerHTML = rows.length ? rows.map(r=>`
-    <tr><td>${r.time}</td><td>${r.items}</td><td class="mono">${r.discountAmt>0?'-'+formatMoney(r.discountAmt):'—'}</td><td class="mono">${formatMoney(r.total)}</td><td>${r.mode}</td>
+    <tr><td>${r.time}</td><td>${r.items}</td><td class="mono">${r.discountAmt>0?'-'+formatMoney(r.discountAmt):'\u2014'}</td><td class="mono">${formatMoney(r.total)}</td><td>${r.mode}</td>
+    <td>${r.paymentStatus==='partial' ? `<span class="badge badge-danger" title="Pending: ${formatMoney(r.pendingAmount)}">Partial</span>` : `<span class="badge badge-neutral">Paid</span>`}</td>
     <td style="white-space:nowrap;">
-      <button class="btn btn-secondary" style="padding:4px 8px;font-size:11px;" onclick="openInvoiceFromReport('${r.id}')" title="Generate invoice for this bill">🧾</button>
-      ${currentRole==='admin' ? `<button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteSale('${r.id}')" title="Delete this bill permanently">🗑</button>` : ''}
+      ${r.paymentStatus==='partial' ? `<button class="btn btn-primary" style="padding:4px 8px;font-size:11px;" onclick="openSettleModal('${r.id}')" title="Mark this bill as fully paid">\ud83d\udcb0</button>` : ''}
+      <button class="btn btn-secondary" style="padding:4px 8px;font-size:11px;" onclick="openInvoiceFromReport('${r.id}')" title="Generate invoice for this bill">\ud83e\uddfe</button>
+      ${currentRole==='admin' ? `<button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteSale('${r.id}')" title="Delete this bill permanently">\ud83d\uddd1</button>` : ''}
     </td></tr>
-  `).join('') : `<tr><td colspan="6" class="muted">No sales in this period</td></tr>`;
+  `).join('') : `<tr><td colspan="7" class="muted">No sales in this period</td></tr>`;
   $('otherTransTableBody').innerHTML = otherRows.length ? otherRows.map(r=>`
     <tr><td>${r.time}</td><td>${escapeHtml(r.desc)}</td><td class="mono">${formatMoney(r.amount)}</td></tr>
   `).join('') : `<tr><td colspan="3" class="muted">No other transactions in this period</td></tr>`;
@@ -1868,10 +1944,39 @@ function renderPieChart(data){
   }).join('');
   return `${svg}<div style="width:100%;">${legend}</div>`;
 }
+let settleTargetId = null;
+let settleMode = 'Cash';
+function openSettleModal(saleId){
+  const d = reportSalesById[saleId];
+  if(!d){ toast('Bill data not found'); return; }
+  settleTargetId = saleId;
+  settleMode = 'Cash';
+  $('settleModeCash').classList.add('active'); $('settleModeOnline').classList.remove('active');
+  $('settlePendingAmt').textContent = formatMoney(d.pendingAmount||0);
+  openModal('modal-settle');
+}
+$('settleModeCash').onclick = () => { settleMode='Cash'; $('settleModeCash').classList.add('active'); $('settleModeOnline').classList.remove('active'); };
+$('settleModeOnline').onclick = () => { settleMode='Online'; $('settleModeOnline').classList.add('active'); $('settleModeCash').classList.remove('active'); };
+$('btnConfirmSettle').onclick = async () => {
+  if(!settleTargetId) return;
+  const btn = $('btnConfirmSettle'); btn.disabled = true; btn.textContent = 'Saving…';
+  try{
+    await withTimeout(db.collection('sales').doc(settleTargetId).update({
+      paymentStatus: 'paid',
+      pendingAmount: 0,
+      paidAmount: reportSalesById[settleTargetId]?.total || 0,
+      settledMode: settleMode,
+      settledAt: firebase.firestore.FieldValue.serverTimestamp()
+    }), 15000, 'Settle payment');
+    toast('Marked as fully paid');
+    closeModal('modal-settle');
+  } catch(err){ console.error(err); toast(err.message || 'Failed to settle payment'); }
+  btn.disabled = false; btn.textContent = 'Mark as Fully Paid';
+};
 function openInvoiceFromReport(saleId){
   const d = reportSalesById[saleId];
   if(!d){ toast('Bill data not found'); return; }
-  openInvoiceModal({ id: saleId, items: d.items||[], total: d.total||0, paymentMode: d.paymentMode||'-', subtotal: d.subtotal||d.total||0, discountAmt: d.discountAmt||0, roundOff: d.roundOff||0 });
+  openInvoiceModal({ id: saleId, items: d.items||[], total: d.total||0, paymentMode: d.paymentMode||'-', subtotal: d.subtotal||d.total||0, discountAmt: d.discountAmt||0, roundOff: d.roundOff||0, paymentStatus: d.paymentStatus||'paid', paidAmount: d.paidAmount||0, pendingAmount: d.pendingAmount||0 });
 }
 async function deleteSale(saleId){
   if(currentRole !== 'admin'){ toast('Only Admin can delete bills'); return; }
@@ -1895,13 +2000,15 @@ async function deleteSale(saleId){
 $('btnDownloadCsv').onclick = () => {
   if(!lastReportSnap || lastReportSnap.empty){ toast('No data to download for this period'); return; }
   const isAdmin = currentRole === 'admin';
-  let csv = isAdmin ? 'Date,Item,Qty,Stock Rate,MRP Rate,Line Total,Bill Discount,Bill Total,Payment Mode\n' : 'Date,Item,Qty,MRP Rate,Line Total,Bill Discount,Bill Total,Payment Mode\n';
+  let csv = isAdmin ? 'Date,Item,Qty,Stock Rate,MRP Rate,Line Total,Bill Discount,Bill Total,Payment Mode,Payment Status,Pending Amount\n' : 'Date,Item,Qty,MRP Rate,Line Total,Bill Discount,Bill Total,Payment Mode,Payment Status,Pending Amount\n';
   lastReportSnap.forEach(doc=>{
     const d = doc.data();
+    const status = d.paymentStatus==='partial' ? 'Partial' : 'Paid';
+    const pending = (d.pendingAmount||0).toFixed(2);
     (d.items||[]).forEach(i=>{
       csv += isAdmin
-        ? `${d.dateKey},"${(i.name||'').replace(/"/g,'""')}",${i.qty},${i.stockRate},${i.mrpRate},${(i.mrpRate*i.qty).toFixed(2)},${(d.discountAmt||0).toFixed(2)},${(d.total||0).toFixed(2)},${d.paymentMode}\n`
-        : `${d.dateKey},"${(i.name||'').replace(/"/g,'""')}",${i.qty},${i.mrpRate},${(i.mrpRate*i.qty).toFixed(2)},${(d.discountAmt||0).toFixed(2)},${(d.total||0).toFixed(2)},${d.paymentMode}\n`;
+        ? `${d.dateKey},"${(i.name||'').replace(/"/g,'""')}",${i.qty},${i.stockRate},${i.mrpRate},${(i.mrpRate*i.qty).toFixed(2)},${(d.discountAmt||0).toFixed(2)},${(d.total||0).toFixed(2)},${d.paymentMode},${status},${pending}\n`
+        : `${d.dateKey},"${(i.name||'').replace(/"/g,'""')}",${i.qty},${i.mrpRate},${(i.mrpRate*i.qty).toFixed(2)},${(d.discountAmt||0).toFixed(2)},${(d.total||0).toFixed(2)},${d.paymentMode},${status},${pending}\n`;
     });
   });
   const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8'});
