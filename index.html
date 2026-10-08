@@ -426,8 +426,8 @@ body.modal-open{overflow:hidden;}
     <div class="card">
       <div class="scroll-table-wrap" style="overflow-x:auto;">
         <table class="report-table">
-          <thead><tr><th>Time</th><th>Description</th><th>Amount</th></tr></thead>
-          <tbody id="otherTransTableBody"><tr><td colspan="3" class="muted">No data</td></tr></tbody>
+          <thead><tr><th>Time</th><th>Description</th><th>Amount</th><th></th></tr></thead>
+          <tbody id="otherTransTableBody"><tr><td colspan="4" class="muted">No data</td></tr></tbody>
         </table>
       </div>
       <div style="display:flex;justify-content:space-between;padding-top:10px;font-weight:700;"><span>Total</span><span class="mono" id="otherTransTotal">₹0.00</span></div>
@@ -1580,9 +1580,11 @@ async function generateInvoicePdf(sale, invoiceNo, customer){
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
   doc.text(`Payment Mode: ${sale.paymentMode || '-'}`, 15, y); y += 6;
   if(sale.paymentStatus === 'partial'){
+    doc.setFont('helvetica', 'bold');
     doc.setTextColor(180,60,50);
     doc.text(`Paid: ${pdfMoney(sale.paidAmount)}   Pending: ${pdfMoney(sale.pendingAmount)}`, 15, y);
     doc.setTextColor(0);
+    doc.setFont('helvetica', 'normal');
     y += 6;
   }
   y += 8;
@@ -1698,13 +1700,13 @@ function loadReport(){
     let qtySum=0;
     const t = d.createdAt && d.createdAt.toDate ? d.createdAt.toDate() : new Date();
     const timeStr = t.toLocaleString('en-IN',{hour:'2-digit',minute:'2-digit',day:'2-digit',month:'short'});
-    (d.items||[]).forEach(i=>{
+    (d.items||[]).forEach((i, idx)=>{
       cost += i.stockRate*i.qty;
       const key = i.isOther ? 'Other Transactions' : i.name;
       if(!itemStats[key]) itemStats[key] = { qty:0, value:0 };
       itemStats[key].qty += i.qty;
       itemStats[key].value += i.mrpRate*i.qty;
-      if(i.isOther){ otherTotal += i.mrpRate*i.qty; otherRows.push({ time: timeStr, desc: i.name, amount: i.mrpRate*i.qty }); }
+      if(i.isOther){ otherTotal += i.mrpRate*i.qty; otherRows.push({ saleId: doc.id, idx, time: timeStr, desc: i.name, amount: i.mrpRate*i.qty }); }
       else { qtySum += i.qty; }
     });
     revenue += d.total||0;
@@ -1731,8 +1733,9 @@ function loadReport(){
     </td></tr>
   `).join('') : `<tr><td colspan="7" class="muted">No sales in this period</td></tr>`;
   $('otherTransTableBody').innerHTML = otherRows.length ? otherRows.map(r=>`
-    <tr><td>${r.time}</td><td>${escapeHtml(r.desc)}</td><td class="mono">${formatMoney(r.amount)}</td></tr>
-  `).join('') : `<tr><td colspan="3" class="muted">No other transactions in this period</td></tr>`;
+    <tr><td>${r.time}</td><td>${escapeHtml(r.desc)}</td><td class="mono">${formatMoney(r.amount)}</td>
+    <td>${currentRole==='admin' ? `<button class="btn btn-danger" style="padding:4px 8px;font-size:11px;" onclick="deleteOtherTransaction('${r.saleId}', ${r.idx})" title="Delete this transaction">\ud83d\uddd1</button>` : ''}</td></tr>
+  `).join('') : `<tr><td colspan="4" class="muted">No other transactions in this period</td></tr>`;
   $('otherTransTotal').textContent = formatMoney(otherTotal);
 
   $('pieChartSection').classList.toggle('hidden', reportMode !== 'monthly');
@@ -1977,6 +1980,43 @@ function openInvoiceFromReport(saleId){
   const d = reportSalesById[saleId];
   if(!d){ toast('Bill data not found'); return; }
   openInvoiceModal({ id: saleId, items: d.items||[], total: d.total||0, paymentMode: d.paymentMode||'-', subtotal: d.subtotal||d.total||0, discountAmt: d.discountAmt||0, roundOff: d.roundOff||0, paymentStatus: d.paymentStatus||'paid', paidAmount: d.paidAmount||0, pendingAmount: d.pendingAmount||0 });
+}
+async function deleteOtherTransaction(saleId, idx){
+  if(currentRole !== 'admin'){ toast('Only Admin can delete transactions'); return; }
+  try{
+    const ref = db.collection('sales').doc(saleId);
+    const snap = await ref.get();
+    if(!snap.exists){ toast('Bill already removed'); return; }
+    const d = snap.data();
+    const items = d.items || [];
+    const target = items[idx];
+    if(!target || !target.isOther){ toast('Transaction not found — please refresh'); return; }
+    const onlyLine = items.length === 1;
+    const msg = onlyLine
+      ? `Delete "${target.name}" (${formatMoney(target.mrpRate*target.qty)})? It is the only item on its bill, so the whole bill will be removed. This cannot be undone.`
+      : `Delete "${target.name}" (${formatMoney(target.mrpRate*target.qty)}) from its bill? The bill total will be recalculated. This cannot be undone.`;
+    if(!confirm(msg)) return;
+
+    if(onlyLine){
+      await withTimeout(ref.delete(), 15000, 'Delete');
+      toast('Transaction deleted');
+      return;
+    }
+    const remaining = items.filter((_, i) => i !== idx);
+    const subtotal = remaining.reduce((s,i)=>s+i.mrpRate*i.qty, 0);
+    const discountAmt = Math.min(d.discountAmt || 0, subtotal);
+    const payableRaw = subtotal - discountAmt;
+    const total = Math.round(payableRaw);
+    const roundOff = +(total - payableRaw).toFixed(2);
+    const update = { items: remaining, subtotal, discountAmt, total, roundOff };
+    if(d.paymentStatus === 'partial'){
+      const paid = d.paidAmount || 0;
+      if(paid >= total){ update.paymentStatus = 'paid'; update.paidAmount = total; update.pendingAmount = 0; }
+      else { update.pendingAmount = total - paid; }
+    }
+    await withTimeout(ref.update(update), 15000, 'Delete');
+    toast('Transaction deleted');
+  } catch(err){ console.error(err); toast(err.message || 'Failed to delete transaction'); }
 }
 async function deleteSale(saleId){
   if(currentRole !== 'admin'){ toast('Only Admin can delete bills'); return; }
